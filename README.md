@@ -88,7 +88,7 @@ Both must return HTTP 200. The `did.json` response must include `Access-Control-
 
 ### 5 — Validate your `did:web` and trust anchor
 
-Catch malformed identity documents *before* you waste a Wizard run. Two independent checks:
+Catch malformed identity documents *before* you try a Wizard run. Two independent checks:
 
 **a) Does your `did:web` resolve and parse?** Use the Universal Resolver and DID Lint
 (both recommended by the GAIA-X Compliance Document):

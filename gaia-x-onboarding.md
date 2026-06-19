@@ -74,8 +74,8 @@ browser session. The outputs (signed VCs + Compliance VC) can be downloaded as J
 
 ### Step 1 — Obtain a qualifying X.509 certificate
 
-GXDCH validates the trust anchor of your certificate chain. **The decisive requirement is
-not the certificate's brand name but whether its issuing CA resolves to a trust anchor listed
+GXDCH validates the trust anchor of your certificate chain. **The decisive requirement is 
+whether its issuing CA resolves to a trust anchor listed
 in the [GAIA-X Registry](https://registry.gaia-x.eu/).** Always confirm your chosen CA is a
 registered trust anchor *before* purchasing — the GXDCH trust-anchor checker (see Step 4 /
 README) verifies this against a live `cert.pem`.
@@ -308,8 +308,8 @@ Content-Type: application/json
 ```
 
 > The exact path and API version drift between releases. **Confirm the current path from your
-> chosen GXDCH operator's Swagger UI** (each operator exposes one at its own `…/docs` endpoint)
-> rather than relying on the literal path above. The Wizard always targets the correct current
+> chosen GXDCH operator's Swagger UI** (each operator exposes one at its own `…/docs` endpoint).
+> The Wizard always targets the correct current
 > endpoint — which is why it is the recommended route for submission.
 
 The Compliance Service:
@@ -332,7 +332,7 @@ matching `registry.lab.gaia-x.eu` and `registrationnumber.notary.lab.gaia-x.eu`)
 
 ### Step 5 — Store and publish the Compliance VC
 
-**No IdentityHub or EDC is required.** The Compliance VC is a plain JSON document. Once
+The Compliance VC is a plain JSON document. Once
 downloaded from the Wizard it must be hosted at a stable, publicly resolvable HTTPS URL.
 Any party wanting to verify your GAIA-X status will fetch it from that URL.
 
@@ -346,7 +346,7 @@ Three files must be publicly accessible under the same domain you used for your 
 | Certificate chain | `https://<domain>/cert.pem` (or any stable path matching `x5u` in `did.json`) | Trust anchor — validates VC signatures |
 | Compliance VC | `https://<domain>/gaia-x/compliance-vc.json` (path is your choice) | Proof of GAIA-X participant status |
 
-All three are static files. One HTTPS-capable domain is sufficient for all of them.
+All three are static files.
 
 #### Hosting requirements
 
