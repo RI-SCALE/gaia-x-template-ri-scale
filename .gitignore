@@ -1,0 +1,25 @@
+# ── Private key material — NEVER commit these ────────────────────────────────
+# Your signing key is the root of trust for every GAIA-X credential you issue.
+# If it leaks, anyone can impersonate your organisation. Keep it off the repo.
+*.p12
+*.pfx
+*.key
+*.pem.key
+private-key*.pem
+key.pem
+
+# ── Per-deployment artifacts (contain or derive from your real identity) ─────
+# These are generated locally during onboarding and are specific to one
+# organisation/domain — they should not live in a reusable template.
+static/cert.pem
+static/.well-known/did.json
+static/gaia-x/compliance-vc.json
+
+# Keep the directory structure and the committed placeholders/examples.
+!static/cert.pem.example
+!static/.well-known/.gitkeep
+!static/gaia-x/.gitkeep
+
+# ── Caddy / runtime ──────────────────────────────────────────────────────────
+caddy_data/
+caddy_config/

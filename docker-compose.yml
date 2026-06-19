@@ -1,0 +1,60 @@
+# GAIA-X identity hosting — two deployment options:
+#
+#   Option A (default): nginx only, port 80.
+#       Use when you already have a reverse proxy (Traefik, another nginx, load balancer)
+#       in front of this container that terminates HTTPS on port 443.
+#       The did:web spec requires HTTPS in production — plain HTTP only works on localhost.
+#
+#   Option B: nginx + Caddy (uncomment the caddy service below).
+#       Caddy automatically obtains and renews a Let's Encrypt certificate for your domain.
+#       No manual certificate management needed. Requires the server to be publicly reachable
+#       on ports 80 and 443 (for the ACME HTTP-01 challenge).
+
+services:
+
+  # ── Option A: nginx static file server (HTTP only) ───────────────────────────
+  gaia-x-hosting:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"   # bind to localhost only; Caddy (or your proxy) talks to it
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./static:/usr/share/nginx/html:ro
+    # Hardening — the container only serves static files, so it needs no
+    # extra privileges and no writable root filesystem.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+
+  # ── Option B: Caddy reverse proxy with automatic HTTPS ───────────────────────
+  # Uncomment the block below to add auto-HTTPS via Let's Encrypt.
+  # Replace YOUR_DOMAIN with your actual domain before starting.
+  # Prerequisite: ports 80 and 443 must be reachable from the internet.
+  #
+  # caddy:
+  #   image: caddy:2-alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - caddy_data:/data          # stores the certificate — persist this volume
+  #     - caddy_config:/config
+  #   command: caddy reverse-proxy --from YOUR_DOMAIN --to gaia-x-hosting:80
+  #   depends_on:
+  #     - gaia-x-hosting
+
+# volumes:
+#   caddy_data:
+#   caddy_config:

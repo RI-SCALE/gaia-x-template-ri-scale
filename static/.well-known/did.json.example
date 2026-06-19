@@ -1,0 +1,23 @@
+{
+  "@context": [
+    "https://www.w3.org/ns/did/v1",
+    "https://w3id.org/security/suites/jws-2020/v1"
+  ],
+  "id": "did:web:YOUR_DOMAIN",
+  "verificationMethod": [
+    {
+      "id": "did:web:YOUR_DOMAIN#key-1",
+      "type": "JsonWebKey2020",
+      "controller": "did:web:YOUR_DOMAIN",
+      "publicKeyJwk": {
+        "kty": "RSA",
+        "n": "REPLACE_WITH_BASE64URL_MODULUS",
+        "e": "AQAB",
+        "x5u": "https://YOUR_DOMAIN/cert.pem"
+      }
+    }
+  ],
+  "assertionMethod": [
+    "did:web:YOUR_DOMAIN#key-1"
+  ]
+}
