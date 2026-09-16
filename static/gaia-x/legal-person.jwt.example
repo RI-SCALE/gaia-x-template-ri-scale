@@ -1,0 +1,35 @@
+PLACEHOLDER — replace with the real Legal Person VC at static/gaia-x/legal-person.jwt
+
+This file must contain the enveloped VC-JWT you signed yourself with the key matching
+static/cert.pem — a single line <header>.<payload>.<signature>.
+
+JWT header:  alg RS256 or ES256 (must match the key type in did.json)
+             kid did:web:YOUR_DOMAIN#key-1   (the verification method from did.json)
+             iss did:web:YOUR_DOMAIN
+
+Payload (the VC), Loire / v2 shape:
+
+{
+  "@context": ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/gaia-x/development#"],
+  "type": ["VerifiableCredential"],
+  "id": "https://YOUR_DOMAIN/gaia-x/legal-person.jwt",
+  "issuer": "did:web:YOUR_DOMAIN",
+  "credentialSubject": {
+    "id": "https://YOUR_DOMAIN/gaia-x/legal-person.jwt#cs",
+    "type": "gx:LegalParticipant",
+    "gx:legalName": "<registered legal name, exactly as in the official registry>",
+    "gx:legalRegistrationNumber": { "id": "https://YOUR_DOMAIN/gaia-x/lrn.jwt" },
+    "gx:headquarterAddress": { "gx:countrySubdivisionCode": "XX-YY" },
+    "gx:legalAddress":       { "gx:countrySubdivisionCode": "XX-YY" }
+  }
+}
+
+FROM THE WIZARD instead: after 'Download all credentials' you get credentials.zip.
+This credential is inside it as  <Legal Person document name>.jwt  (may appear as Document-N.jwt; decode to identify)
+The format is automatic (.jwt for anything signed) - there is nothing to choose.
+RENAME it to this file's name; the Wizard never publishes it to your host.
+
+The country codes are ISO 3166-2 subdivision codes (e.g. NL-NH), not country codes.
+`gx:legalRegistrationNumber` references the LRN VC by its resolvable URL.
+
+The `id` MUST equal the URL this file is served from, and must never change.

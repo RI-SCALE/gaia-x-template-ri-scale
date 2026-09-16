@@ -13,12 +13,18 @@ key.pem
 # organisation/domain — they should not live in a reusable template.
 static/cert.pem
 static/.well-known/did.json
-static/gaia-x/compliance-vc.json
+
+# Every signed credential: lrn.jwt, legal-person.jwt, tandc.jwt,
+# compliance-vc.jwt. Wildcards so extra credentials added later
+# (e.g. gx:ServiceOffering / gx:DataProduct) are covered automatically.
+static/gaia-x/*.json
+static/gaia-x/*.jwt
 
 # Keep the directory structure and the committed placeholders/examples.
 !static/cert.pem.example
 !static/.well-known/.gitkeep
 !static/gaia-x/.gitkeep
+!static/gaia-x/*.example
 
 # ── Caddy / runtime ──────────────────────────────────────────────────────────
 caddy_data/

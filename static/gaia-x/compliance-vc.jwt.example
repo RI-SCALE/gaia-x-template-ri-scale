@@ -1,0 +1,28 @@
+PLACEHOLDER - replace with the real Compliance VC at static/gaia-x/compliance-vc.jwt
+
+This file is the HTTP response body of the compliance call, saved verbatim:
+
+  curl -X POST "https://<operator-compliance>/v2/api/credential-offers/standard-compliance?vcid=<url-encoded URL of THIS file>" \
+       -H 'Content-Type: application/vp+jwt' \
+       --data-binary @your-vp.jwt \
+       -o static/gaia-x/compliance-vc.jwt \
+       -w '\nHTTP %{http_code}  %{content_type}\n'
+
+Expect HTTP 201 with Content-Type application/vc+jwt. The body is ONE line
+<header>.<payload>.<signature> - the Compliance VC as an enveloped VC-JWT.
+On any other status the body is an error JSON: delete this file and fix the cause.
+
+
+FROM THE WIZARD instead: after 'Download all credentials' you get credentials.zip.
+This credential is inside it as  Compliance Verifiable Credential.jwt
+The format is automatic (.jwt for anything signed) - there is nothing to choose.
+RENAME it to this file's name; the Wizard never publishes it to your host.
+
+The filename must match the vcid you submitted - it is baked into the signature and can
+never change afterwards. nginx also serves a Wizard-downloaded JSON copy if you keep one
+next to it, but only the JWT at the vcid URL counts.
+
+Expiry: ~90 days observed. Schedule a re-submission job (gaia-x-onboarding.md Step 5).
+
+Contents: credentialSubject is a list of {id, integrity} pointers to the three VCs you
+submitted. No endpoints, no dataset information - it attests participant status only.

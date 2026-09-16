@@ -1,0 +1,24 @@
+PLACEHOLDER — replace with the real Terms & Conditions VC at static/gaia-x/tandc.jwt
+
+Self-signed with the same key as legal-person.jwt. Single line <header>.<payload>.<signature>.
+
+Payload (the VC), Loire / v2 shape:
+
+{
+  "@context": ["https://www.w3.org/ns/credentials/v2", "https://w3id.org/gaia-x/development#"],
+  "type": ["VerifiableCredential", "gx:Issuer"],
+  "id": "https://YOUR_DOMAIN/gaia-x/tandc.jwt",
+  "issuer": "did:web:YOUR_DOMAIN",
+  "credentialSubject": {
+    "id": "https://YOUR_DOMAIN/gaia-x/tandc.jwt#cs",
+    "gaiaxTermsAndConditions": "4bd7554097444c960292b4726c2efa1373485e8a5565d94d41195214c5e0ceb3"
+  }
+}
+
+FROM THE WIZARD instead: after 'Download all credentials' you get credentials.zip.
+This credential is inside it as  Terms and conditions.jwt
+The format is automatic (.jwt for anything signed) - there is nothing to choose.
+RENAME it to this file's name; the Wizard never publishes it to your host.
+
+The hash is a fixed constant per Trust Framework release. The value above is what the
+GAIA-X Registry itself used as of 2026-09-15.
