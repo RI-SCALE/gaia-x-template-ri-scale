@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Generate did.json from an X.509 certificate (eIDAS seal or EV SSL).
+Generate did.json from an X.509 certificate chain, and sanity-check the chain
+against the rules the GAIA-X Registry actually enforces.
 
 Usage:
     python generate_did_json.py --domain your.domain.eu --cert path/to/cert.pem
 
 Output:
-    Prints the did.json to stdout. Redirect to static/.well-known/did.json.
+    Prints did.json to stdout. Redirect to static/.well-known/did.json.
+    Warnings go to stderr, so redirecting stdout stays safe.
+
+Options:
+    --strict   exit non-zero if any chain problem is found (use in CI)
 
 Requirements:
     pip install cryptography
@@ -21,9 +26,25 @@ from pathlib import Path
 try:
     from cryptography import x509
     from cryptography.hazmat.primitives.asymmetric import rsa, ec
-    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import ExtensionOID
 except ImportError:
     sys.exit("Missing dependency: pip install cryptography")
+
+
+# CA/Browser Forum Extended Validation certificate-policy identifier (an OID, not a
+# version — OIDs are permanent). Copied from GAIA-X's own registry source, which
+# rejects any leaf certificate without it whenever the registry's `evsslonly` flag
+# is true — the case on every production GXDCH.
+#
+# This is about the certificate PRODUCT, not the issuer: an eIDAS QTSP can issue an
+# EV SSL certificate (which passes), while a Qualified Certificate for Electronic
+# Seal from the same QTSP is a document-signing certificate that never carries this
+# OID and is rejected. See gaia-x-onboarding.md Step 1.
+#
+# If GAIA-X changes the rule, update this one line; the live registry check in the
+# docs remains the authoritative gate.
+#   https://gitlab.com/gaia-x/lab/compliance/gx-registry/-/blob/development/src/trust-anchor/services/trust-anchor.service.ts
+OID_EV_SSL = "2.23.140.1.1"
 
 
 def b64url(data: bytes) -> str:
@@ -61,11 +82,10 @@ def public_key_to_jwk(cert: x509.Certificate, cert_url: str) -> dict:
         sys.exit(f"Unsupported key type: {type(pub).__name__}")
 
 
-def load_leaf_cert(pem_path: Path) -> x509.Certificate:
+def load_chain(pem_path: Path) -> list:
+    """Load every certificate in the PEM file, in file order (leaf first)."""
     pem_text = pem_path.read_text()
-    # Split on PEM boundaries, take the first certificate (leaf)
-    blocks = []
-    current = []
+    blocks, current = [], []
     for line in pem_text.splitlines():
         if line.startswith("-----BEGIN CERTIFICATE-----"):
             current = [line]
@@ -79,7 +99,67 @@ def load_leaf_cert(pem_path: Path) -> x509.Certificate:
     if not blocks:
         sys.exit("No certificate found in the PEM file.")
 
-    return x509.load_pem_x509_certificate(blocks[0].encode())
+    return [x509.load_pem_x509_certificate(b.encode()) for b in blocks]
+
+
+def check_chain(chain: list) -> list:
+    """Return the problems the GXDCH Registry would reject this chain for (empty = OK).
+
+    Pure: no I/O, no shared state. The caller decides how to report.
+    """
+    problems = []
+    leaf, root = chain[0], chain[-1]
+
+    # 1. The chain must terminate in a self-signed root.
+    #    Registry: 409 "Root certificate is not self-signed"
+    if len(chain) == 1:
+        problems.append(
+            "cert.pem contains only one certificate. GAIA-X needs the FULL chain "
+            "ending in a self-signed root."
+        )
+    elif root.subject != root.issuer:
+        problems.append(
+            "the last certificate in cert.pem is NOT self-signed "
+            f"(subject={root.subject.rfc4514_string()!r}, "
+            f"issuer={root.issuer.rfc4514_string()!r}).\n"
+            "         The Registry will reply 409 'Root certificate is not self-signed'.\n"
+            "         Append your CA's self-signed root, e.g. for Let's Encrypt:\n"
+            "           curl -s https://letsencrypt.org/certs/isrgrootx1.pem >> cert.pem"
+        )
+
+    # 2. Every certificate must be issued by the next one in the file.
+    #    Registry: 409 "... invalid signature" when a cross-signed link is missing.
+    for i in range(len(chain) - 1):
+        if chain[i].issuer != chain[i + 1].subject:
+            problems.append(
+                f"broken chain order at position {i}: issuer of "
+                f"{chain[i].subject.rfc4514_string()!r} is "
+                f"{chain[i].issuer.rfc4514_string()!r}, but the next certificate is "
+                f"{chain[i + 1].subject.rfc4514_string()!r}.\n"
+                "         Certificates must run leaf -> intermediate(s) -> root with no gaps "
+                "(do not drop cross-signed intermediates)."
+            )
+            break
+
+    # 3. Production GXDCH require the EV SSL policy OID on the leaf.
+    try:
+        policies = leaf.extensions.get_extension_for_oid(ExtensionOID.CERTIFICATE_POLICIES).value
+        oids = {p.policy_identifier.dotted_string for p in policies}
+    except x509.ExtensionNotFound:
+        oids = set()
+
+    if OID_EV_SSL not in oids:
+        problems.append(
+            f"the leaf certificate does not carry policy OID {OID_EV_SSL} (EV SSL).\n"
+            "         Fine for the lab '/development' and '/main' paths.\n"
+            "         Every PRODUCTION GXDCH will reply 409 "
+            "'The leaf certificate provided is not EV-SSL'.\n"
+            "         You need an EV SSL certificate; an eIDAS QTSP can issue one, but a\n"
+            "         Qualified Certificate for eSeal cannot be used. "
+            "See gaia-x-onboarding.md Step 1."
+        )
+
+    return problems
 
 
 def main():
@@ -90,6 +170,11 @@ def main():
     parser.add_argument(
         "--cert-url",
         help="Public URL where cert.pem is hosted (default: https://<domain>/cert.pem)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any chain problem is found (for CI)",
     )
     args = parser.parse_args()
 
@@ -102,8 +187,15 @@ def main():
     did = f"did:web:{domain}"
     vm_id = f"{did}#{args.key_id}"
 
-    cert = load_leaf_cert(Path(args.cert))
-    jwk = public_key_to_jwk(cert, cert_url)
+    chain = load_chain(Path(args.cert))
+
+    problems = check_chain(chain)
+    for problem in problems:
+        print(f"WARNING: {problem}", file=sys.stderr)
+    if not problems:
+        print("OK: chain checks passed — accepted by production GXDCH.", file=sys.stderr)
+
+    jwk = public_key_to_jwk(chain[0], cert_url)
 
     did_doc = {
         "@context": [
@@ -123,6 +215,9 @@ def main():
     }
 
     print(json.dumps(did_doc, indent=2))
+
+    if args.strict and problems:
+        sys.exit(f"{len(problems)} chain problem(s) found; --strict was requested.")
 
 
 if __name__ == "__main__":

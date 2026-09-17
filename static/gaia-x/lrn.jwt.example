@@ -1,0 +1,28 @@
+PLACEHOLDER — replace with the real Legal Registration Number VC at static/gaia-x/lrn.jwt
+
+This file must contain the enveloped VC-JWT returned by the GXDCH Notary — a single
+line of the form <base64url-header>.<base64url-payload>.<base64url-signature>
+with no surrounding JSON and no trailing newline issues.
+
+How to obtain it (url-encode the vcId; both query parameters are mandatory):
+
+  VCID=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" \
+         "https://YOUR_DOMAIN/gaia-x/lrn.jwt")
+
+  curl "https://<operator-notary>/v2/registration-numbers/lei-code/<YOUR-LEI>\
+?vcId=$VCID&subjectId=did:web:YOUR_DOMAIN" -o static/gaia-x/lrn.jwt
+
+Accepted {type} path segments: lei-code (preferred), vat-id, eori, tax-id,
+country-company-number.  EUID is NOT supported by any Notary endpoint.
+
+The vcId you pass MUST equal the URL this file is served from — it is baked into the
+signature, so it can never change afterwards.
+
+FROM THE WIZARD instead: after 'Download all credentials' you get credentials.zip.
+This credential is inside it as  Legal registration number.jwt
+The format is automatic (.jwt for anything signed) - there is nothing to choose.
+RENAME it to this file's name; the Wizard never publishes it to your host.
+
+Dev/test uses the same call against
+https://registrationnumber.notary.lab.gaia-x.eu/development — the number is validated
+against real external registries even there.
