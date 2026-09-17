@@ -23,10 +23,10 @@ The first two exist before you request any credential. The other four are added 
 > regenerated `did.json`, re-signed credentials, and different GXDCH endpoints. So use a
 > permanent domain from the first run.
 
-> ### ⚠️ Read the certificate section first
-> Every production GXDCH rejects a leaf certificate without the CA/Browser Forum **EV SSL**
-> policy OID `2.23.140.1.1` — **including eIDAS qualified seals**, which do not carry it. This
-> contradicts the GAIA-X policy documents. See
+> ### ⚠️ Get the certificate type right
+> Production GXDCH require the identity certificate to be **EV SSL** (CA/Browser Forum policy
+> OID `2.23.140.1.1`). A Qualified Certificate for Electronic Seal is a document-signing
+> certificate and does not carry it — but an eIDAS QTSP can issue the EV SSL one. See
 > [`gaia-x-onboarding.md`](gaia-x-onboarding.md) Step 1.
 
 ---
@@ -38,7 +38,7 @@ The first two exist before you request any credential. The other four are added 
 - Python 3.9+ and `pip install cryptography`
 - A certificate:
   - **dev/test** — Let's Encrypt is accepted
-  - **production** — EV SSL as a PKCS#12 `.p12`/`.pfx`, with an **exportable** private key
+  - **production** — **EV SSL** as a PKCS#12 `.p12`/`.pfx`, with an **exportable** private key
 
 > ⚠️ **Never commit the private key.** It is the root of trust for every credential you issue.
 > `.gitignore` already excludes key material and all generated per-deployment files — still

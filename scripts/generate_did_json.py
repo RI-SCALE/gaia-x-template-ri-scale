@@ -34,8 +34,15 @@ except ImportError:
 # CA/Browser Forum Extended Validation certificate-policy identifier (an OID, not a
 # version — OIDs are permanent). Copied from GAIA-X's own registry source, which
 # rejects any leaf certificate without it whenever the registry's `evsslonly` flag
-# is true — the case on every production GXDCH. If GAIA-X changes that rule, update
-# this one line; the live registry check in the docs remains the authoritative gate.
+# is true — the case on every production GXDCH.
+#
+# This is about the certificate PRODUCT, not the issuer: an eIDAS QTSP can issue an
+# EV SSL certificate (which passes), while a Qualified Certificate for Electronic
+# Seal from the same QTSP is a document-signing certificate that never carries this
+# OID and is rejected. See gaia-x-onboarding.md Step 1.
+#
+# If GAIA-X changes the rule, update this one line; the live registry check in the
+# docs remains the authoritative gate.
 #   https://gitlab.com/gaia-x/lab/compliance/gx-registry/-/blob/development/src/trust-anchor/services/trust-anchor.service.ts
 OID_EV_SSL = "2.23.140.1.1"
 
@@ -147,7 +154,9 @@ def check_chain(chain: list) -> list:
             "         Fine for the lab '/development' and '/main' paths.\n"
             "         Every PRODUCTION GXDCH will reply 409 "
             "'The leaf certificate provided is not EV-SSL'.\n"
-            "         See gaia-x-onboarding.md Step 1 before buying a certificate."
+            "         You need an EV SSL certificate; an eIDAS QTSP can issue one, but a\n"
+            "         Qualified Certificate for eSeal cannot be used. "
+            "See gaia-x-onboarding.md Step 1."
         )
 
     return problems

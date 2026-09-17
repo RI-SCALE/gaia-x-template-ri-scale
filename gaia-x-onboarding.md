@@ -83,66 +83,47 @@ and must be **renamed and copied** into `static/gaia-x/` by you — see Step 4, 
 
 ### Step 1 — Obtain a qualifying X.509 certificate
 
-> ### ⚠️ Buy an **EV SSL** certificate, not an eIDAS qualified seal
->
-> The GAIA-X policy documents say eIDAS is preferred and EV SSL is a conditional fallback.
-> **The deployed code says the opposite.** Every production GXDCH registry rejects a leaf
-> certificate that does not carry the CA/Browser Forum **EV SSL** policy OID `2.23.140.1.1`:
->
-> ```
-> 409  "The leaf certificate provided is not EV-SSL - 2.23.140.1.1 OID is missing"
-> ```
->
-> An eIDAS **Qualified Certificate for Electronic Seal does not contain that OID** — it carries
-> ETSI QCStatements instead. So as deployed today, an eIDAS seal fails this check and an EV SSL
-> certificate passes. Source: `verifyLeafOIDEVSSL()` in
-> [`gx-registry`](https://gitlab.com/gaia-x/lab/compliance/gx-registry/-/blob/development/src/trust-anchor/services/trust-anchor.service.ts).
->
-> **Confirm this yourself before buying any certificate.** Every registry publishes the flag that
-> controls the check:
->
-> ```bash
-> curl -s https://<operator-registry>/v2/configurations/credentials | grep -o 'evsslonly[^}]*'
-> ```
->
-> Measured 2026-09-15 — all eight production operators enforce it:
->
-> | Registry | `evsslonly` |
-> |---|---|
-> | all 8 production GXDCH operators (`…/v2`) | `true` → EV required |
-> | `registry.lab.gaia-x.eu/development` and `/main` | `false` → any CA, incl. Let's Encrypt |
+**Buy an EV SSL certificate.**
 
-Two separate requirements, both mandatory:
+The Registry checks two things:
 
-1. **The chain root must be a trust anchor in the GAIA-X Registry** — true for any public CA.
-2. **The leaf must be EV SSL** (see above).
+1. **The chain root must be in the GAIA-X trust-anchor list.** That list is the EU Trusted List
+   merged with the browser root programmes — ~4 700 CAs, every major eIDAS QTSP included — so any
+   reputable public CA qualifies.
+2. **The leaf must carry the CA/Browser Forum EV policy OID `2.23.140.1.1`**, i.e. it must be an
+   EV SSL certificate. Anything else is refused:
 
-| Environment | Accepted certificate |
+   ```
+   409  "The leaf certificate provided is not EV-SSL - 2.23.140.1.1 OID is missing"
+   ```
+
+> **An eIDAS QTSP can sell you an EV SSL certificate** (D-Trust, GlobalSign, Sectigo, Actalis,
+> DigiCert all do) — one purchase satisfying both the policy documents and the deployed code.
+
+#### What to order
+
+An **EV SSL certificate** from any CA/Browser Forum member, ideally an eIDAS QTSP. Vetting covers
+legal existence, physical address, domain control and a callback to your published phone number.
+**1–5 days, €100–300/yr**, delivered as PKCS#12.
+
+Ask the CA for written confirmation that the certificate carries policy OID `2.23.140.1.1`, and
+that **the private key is exportable** — a key locked into a hardware token (QSCD) cannot sign
+from a script, which rules out automated renewals (Step 5).
+
+| Environment | Certificate |
 |---|---|
-| **Production** (`<operator>/v2`) | **EV SSL** — verified working. eIDAS qualified seal: **rejected** (verified in source) |
-| **Development / test** (`lab…/development`, `/main`) | Any CA, including Let's Encrypt |
+| **Production** (`<operator>/v2`) | EV SSL |
+| **Dev / test** (`lab…/development`, `/main`) | any CA, including Let's Encrypt |
 
-#### Obtaining an EV SSL certificate
+The difference is one flag each registry publishes — check it before buying:
 
-Purchase from any CA/Browser Forum member (DigiCert, Sectigo, GlobalSign, …). Vetting covers
-verified legal existence, physical address (no P.O. boxes), domain control, and a callback to the
-organisation's published phone number. Delivered as PKCS#12. **1–5 days, €100–300/yr.**
+```bash
+curl -s https://<operator-registry>/v2/configurations/credentials | grep -o 'evsslonly[^}]*'
+```
 
-Ask the CA to confirm in writing that the issued certificate includes certificate policy OID
-`2.23.140.1.1`.
-
-#### eIDAS Qualified Certificate for Electronic Seal — for reference
-
-Issued under eIDAS (EU 910/2014) by a state-supervised QTSP; find one via the
-[EU Trusted List Browser](https://eidas.ec.europa.eu/efda/tl-browser/) (service type
-"QCert for eSeal"). Requires proof of legal existence, the registration number, and identity
-verification of an authorised representative. **1–4 weeks, €100–400/yr.** Carries full EU legal
-presumption and may be required by future GAIA-X Label Levels — but see the warning above before
-choosing it.
-
-> **Key custody.** A QTSP may deliver an eIDAS key on a QSCD hardware token from which the
-> private key cannot be exported. Local/CI signing then becomes impossible. Confirm you will
-> receive an exportable PKCS#12 before ordering.
+Measured 2026-09-15: all eight production operators report `true`, the lab `/development` and
+`/main` paths report `false`. Source: `verifyLeafOIDEVSSL()` in
+[`gx-registry`](https://gitlab.com/gaia-x/lab/compliance/gx-registry/-/blob/development/src/trust-anchor/services/trust-anchor.service.ts).
 
 #### Chain construction — the most common hard failure
 
@@ -160,9 +141,9 @@ cross-signed intermediate. Both failure modes were reproduced against the live r
 openssl crl2pkcs7 -nocrl -certfile static/cert.pem | openssl pkcs7 -print_certs -noout
 ```
 
-> **The TLS certificate and the identity certificate are different certificates.** Let's Encrypt
-> is fine for the web server's TLS. The EV SSL certificate is the *identity* certificate served
-> at `cert.pem` and referenced by `x5u`. Two certificates, two renewal cycles.
+> **The TLS certificate and the identity certificate are two different certificates.** Let's
+> Encrypt is fine for the web server's TLS, in production too. The EV SSL certificate is the
+> *identity* certificate served at `cert.pem` and referenced by `x5u`. Two renewal cycles.
 
 ---
 
@@ -464,7 +445,7 @@ Optional Label Levels are not required for basic interoperability:
 | Level | Requirement | Needed for RI-SCALE? |
 |---|---|---|
 | **Standard Compliance** | Valid Compliance VC from GXDCH | Yes — minimum |
-| **Label Level 1** | GDPR compliance + eIDAS/EV cert | No (unless data space mandates it) |
+| **Label Level 1** | GDPR-related declarations (criteria not reviewed here) | No (unless a data space mandates it) |
 | **Label Level 2** | ISO 27001 or equivalent certification | No |
 | **Label Level 3** | EU-based provider + SOC2/BSI C5 | No |
 
@@ -476,7 +457,7 @@ Optional Label Levels are not required for basic interoperability:
 [ ] Lab dry-run completed first (see gaia-x-dev-test.md) — same infrastructure, free
 [ ] GXDCH operator chosen from the live meta-registry; its evsslonly flag checked
 [ ] EV SSL certificate ordered, CA confirmed policy OID 2.23.140.1.1 is present
-      (eIDAS is rejected by the deployed code — only with written confirmation from the operator)
+      (an eIDAS QTSP can issue one; a Qualified Certificate for eSeal cannot be used)
 [ ] Private key exportable and kept secret (not locked in a non-exportable QSCD)
 [ ] Permanent public domain with HTTPS on port 443
 [ ] cert.pem = full chain ENDING IN A SELF-SIGNED ROOT; last cert has subject == issuer
@@ -515,7 +496,7 @@ Optional Label Levels are not required for basic interoperability:
 | Notary (registration numbers) | https://gitlab.com/gaia-x/lab/compliance/gaia-x-notary-registrationnumber |
 | Wizard | https://gitlab.com/gaia-x/lab/gaia-x-onboarding-prototypes/gx-signing-tool |
 | Credential Event Service | https://gitlab.com/gaia-x/lab/credentials-events-service |
-
+ 
 **Policy and background:**
 
 | Resource | URL |
@@ -523,6 +504,7 @@ Optional Label Levels are not required for basic interoperability:
 | Join GAIA-X / AISBL membership | https://gaia-x.eu/join-gaia-x/ · https://forms.membersplatform.gaia-x.eu/ |
 | Compliance Document (latest) | https://docs.gaia-x.eu/policy-rules-committee/compliance-document/latest/ |
 | Trust Anchors (24.11) | https://docs.gaia-x.eu/policy-rules-committee/compliance-document/24.11/Gaia-X_Trust_Anchors/ |
+| Trust Anchors table, 22.10 (State / eIDAS / EV SSL) | https://docs.gaia-x.eu/policy-rules-committee/trust-framework/22.10/trust_anchors/ |
 | Trust Framework (live) | https://gaia-x.gitlab.io/policy-rules-committee/trust-framework/ |
 | EU Trusted List Browser (eIDAS QTSPs) | https://eidas.ec.europa.eu/efda/tl-browser/ |
 | W3C VC-JOSE-COSE (signing format) | https://www.w3.org/TR/vc-jose-cose/#with-jose |

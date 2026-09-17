@@ -14,8 +14,8 @@
 #   * the WEB SERVER TLS certificate (Caddy's, or your proxy's). Let's Encrypt is fine here,
 #     in production too. It only secures the HTTPS connection.
 #   * the IDENTITY certificate, served as static/cert.pem and referenced by x5u in did.json.
-#     This one signs your credentials and must be EV SSL in production —
-#     see gaia-x-onboarding.md Step 1.
+#     This one signs your credentials and must be EV SSL in production (an eIDAS QTSP can
+#     issue one — see gaia-x-onboarding.md Step 1).
 #
 # This file is identical in dev and production; only static/ contents and the GXDCH
 # endpoints you talk to change.

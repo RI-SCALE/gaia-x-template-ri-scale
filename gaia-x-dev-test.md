@@ -31,8 +31,9 @@ Two consequences worth deciding **before any deployment**:
    Here, one Let's Encrypt cert does both jobs. In production nginx keeps a Let's Encrypt TLS
    cert, while `static/cert.pem` becomes the EV SSL identity cert. Plan two renewal cycles.
 
-> ⚠️ **Before buying a certificate**, read the certificate section of
-> [`gaia-x-onboarding.md`](gaia-x-onboarding.md).
+> ⚠️ **Before buying a certificate**, read Step 1 of
+> [`gaia-x-onboarding.md`](gaia-x-onboarding.md). Short version: production needs an **EV SSL**
+> certificate.
 
 ---
 
@@ -67,7 +68,7 @@ Every lab service exposes several deployment paths.
 
 > ⚠️ **Do not use the `/v2` path for a dev test.** `registry.lab.gaia-x.eu/v2` rejects any
 > non-EV certificate outright (`409 — The leaf certificate provided is not EV-SSL,
-> 2.23.140.1.1 OID is missing`). `/development` accept Let's Encrypt.
+> 2.23.140.1.1 OID is missing`). `/development` accepts Let's Encrypt.
 > All paths are listed at <https://catalogue.lab.gaia-x.eu/>.
 
 ---
@@ -101,9 +102,9 @@ must be genuine.
 
 ## Step 1 — Domain + Let's Encrypt certificate
 
-For dev, **Let's Encrypt is accepted**. No eIDAS, no EV SSL (those are production-only).
-Use a domain topology we would keep in production, e.g. `gaia-x.<our-domain>` — the `did:web`
-and the VC URLs are meant to be permanent.
+For dev, **Let's Encrypt is accepted** — the lab `/development` path does not require the EV SSL
+certificate that production does. Use a domain topology we would keep in production, e.g.
+`gaia-x.<our-domain>` — the `did:web` and the VC URLs are meant to be permanent.
 
 ```bash
 certbot certonly --standalone -d gaia-x.our-domain.eu
