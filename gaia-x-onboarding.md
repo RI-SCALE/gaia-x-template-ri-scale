@@ -427,13 +427,78 @@ change afterwards. `nginx/nginx.conf` in this repo already serves all six correc
 
 #### Optional: publish to the Credential Event Service (CES)
 
-CES is a **notice board, not a catalogue**.
+CES is a **notice board, not a catalogue**: it announces that a credential exists so that
+catalogues polling the feed know to come and look.
 
+##### The request
+
+Required CloudEvents fields, **lower-case on the wire** (the OpenAPI schema shows camelCase Java
+DTO names — `specVersion`, `dataContentType`, `dataBase64` — but the deployed service reads and
+stores the lower-case CloudEvents spelling, verified against live events):
+
+| Field | Value |
+|---|---|
+| `specversion` | `"1.0"` |
+| `type` | `eu.gaia-x.credential` for a `gx:ComplianceCredential`; **any other string** for non-compliance credentials (e.g. service offerings) |
+| `source` | a URI identifying you, e.g. your domain |
+| `time` | RFC 3339 / ISO 8601 UTC |
+| `datacontenttype` | `application/json` |
+| `data_base64` | **the VC-JWT string itself** — put the contents of `compliance-vc.jwt` here verbatim, *not* base64 of it (despite the field name; this is what the service actually stores) |
+| `id` | optional UUID |
+
+Build it from the file you already host:
+
+```bash
+python - > ce.json <<'PY'
+import json, datetime, uuid, pathlib
+jwt = pathlib.Path("static/gaia-x/compliance-vc.jwt").read_text().strip()
+print(json.dumps({
+    "specversion":     "1.0",
+    "id":              str(uuid.uuid4()),
+    "type":            "eu.gaia-x.credential",
+    "source":          "https://your.domain.eu/",
+    "time":            datetime.datetime.now(datetime.timezone.utc)
+                           .isoformat().replace("+00:00", "Z"),
+    "datacontenttype": "application/json",
+    "data_base64":     jwt,
+}))
+PY
+
+curl -X POST "https://<operator-ces>/v2/credentials-events" \
+     -H 'Content-Type: application/cloudevents+json' \
+     --data-binary @ce.json \
+     -w '\nHTTP %{http_code}\n'
 ```
-POST https://<ces-host>/v2/credentials-events     # CloudEvent wrapping the VC-JWT
-     type: eu.gaia-x.credential                   # for gx:ComplianceCredential
-GET  https://<ces-host>/v2/credentials-events     # what consumers read (public)
+
+`Content-Type: application/json` is accepted too.
+
+| Response | Meaning |
+|---|---|
+| **`201`** | event received and ready to be shared (empty body) |
+| `400` | event format incorrect |
+| `409` | event data signature invalid, or invalid issuer |
+| `500` | technical error |
+
+CES verifies the credential was signed by a trusted GXDCH — you cannot push an arbitrary JWT.
+
+##### Which host
+
+The meta-registry (`/api/clearing-houses`) lists registry, compliance and notary endpoints but
+**no CES entry**, so there is no automatic way to discover your operator's CES. **Ask your GXDCH
+operator for their CES URL.** The GAIA-X lab hosts, for dev runs only, are
+`ces-development.lab.gaia-x.eu`, `ces-main.lab.gaia-x.eu` and `ces-v1.lab.gaia-x.eu`.
+
+##### Reading the feed back
+
+```bash
+curl -s "https://<operator-ces>/v2/credentials-events?size=20&page=0"
 ```
+
+##### When to push
+
+**Every time you obtain a new Compliance VC** — i.e. at each ~90-day renewal. Re-pushing after a
+renewal also satisfies the "publish at least once a year" retention rule automatically, since CES
+keeps events for a maximum of one year. Use the same `source`; a new `id` per event is fine.
 
 ---
 
