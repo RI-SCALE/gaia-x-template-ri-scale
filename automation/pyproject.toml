@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gx-automation"
+version = "0.1.0"
+description = "Gaia-X identity automation for gaia-x-hosting: certificate, did.json, credentials, renewal"
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography>=42",
+    "requests>=2.31",
+    "tomli>=2; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+shacl = ["pyshacl>=0.26"]   # for the live shape test only
+
+[project.scripts]
+gx = "gx.__main__:main"
+
+[tool.setuptools]
+packages = ["gx"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: talks to the Gaia-X lab and public services; skipped unless pytest runs with --live"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

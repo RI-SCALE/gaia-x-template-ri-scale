@@ -26,6 +26,22 @@ static/gaia-x/*.jwt
 !static/gaia-x/.gitkeep
 !static/gaia-x/*.example
 
+# Credentials staged by the gx tool before they are published.
+static/.staging/
+
+# Production identity certificate chain as delivered by the CA (gx prod config).
+certs/
+
+# ── Deployment settings (domain, legal data) ─────────────────────────────────
+.env
+automation/config/site.toml
+
 # ── Caddy / runtime ──────────────────────────────────────────────────────────
 caddy_data/
 caddy_config/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/

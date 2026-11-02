@@ -1,28 +1,27 @@
-# GAIA-X identity hosting — two deployment options:
+# GAIA-X identity hosting. Settings come from .env (copy .env.example).
 #
-#   Option A (default): nginx only, port 80.
-#       Use when you already have a reverse proxy (Traefik, another nginx, load balancer)
-#       in front of this container that terminates HTTPS on port 443.
-#       The did:web spec requires HTTPS in production — plain HTTP only works on localhost.
+#   nginx (always)        serves static/ on 127.0.0.1:8080.
+#   caddy (profile caddy) automatic HTTPS via Let's Encrypt on ports 80/443.
+#       Enable with COMPOSE_PROFILES=caddy in .env. Leave it off if another reverse
+#       proxy (Traefik, another nginx, a load balancer) already terminates HTTPS.
+#       The did:web spec requires HTTPS — plain HTTP only works on localhost.
+#   gx    (profile tools) the automation tool; never starts with `up`, run it with
+#       docker compose run --rm gx status | gx run -i     (see automation/README.md)
 #
-#   Option B: nginx + Caddy (uncomment the caddy service below).
-#       Caddy automatically obtains and renews a Let's Encrypt certificate for your domain.
-#       No manual certificate management needed. Requires the server to be publicly reachable
-#       on ports 80 and 443 (for the ACME HTTP-01 challenge).
-#
-# NOTE — two unrelated certificates are involved, do not confuse them:
+# NOTE — two certificates are involved, do not confuse them:
 #   * the WEB SERVER TLS certificate (Caddy's, or your proxy's). Let's Encrypt is fine here,
 #     in production too. It only secures the HTTPS connection.
 #   * the IDENTITY certificate, served as static/cert.pem and referenced by x5u in did.json.
 #     This one signs your credentials and must be EV SSL in production (an eIDAS QTSP can
-#     issue one — see gaia-x-onboarding.md Step 1).
+#     issue one — see gaia-x-onboarding.md Step 1). In dev, Caddy's certificate is reused
+#     as the identity certificate.
 #
 # This file is identical in dev and production; only static/ contents and the GXDCH
 # endpoints you talk to change.
 
 services:
 
-  # ── Option A: nginx static file server (HTTP only) ───────────────────────────
+  # ── nginx static file server (HTTP only) ─────────────────────────────────────
   gaia-x-hosting:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -47,24 +46,38 @@ services:
       - /var/cache/nginx
       - /var/run
 
-  # ── Option B: Caddy reverse proxy with automatic HTTPS ───────────────────────
-  # Uncomment the block below to add auto-HTTPS via Let's Encrypt.
-  # Replace YOUR_DOMAIN with your actual domain before starting.
-  # Prerequisite: ports 80 and 443 must be reachable from the internet.
-  #
-  # caddy:
-  #   image: caddy:2-alpine
-  #   restart: unless-stopped
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - caddy_data:/data          # stores the certificate — persist this volume
-  #     - caddy_config:/config
-  #   command: caddy reverse-proxy --from YOUR_DOMAIN --to gaia-x-hosting:80
-  #   depends_on:
-  #     - gaia-x-hosting
+  # ── Caddy reverse proxy with automatic HTTPS ─────────────────────────────────
+  # Prerequisite: ports 80 and 443 reachable from the internet (ACME HTTP-01).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GX_DOMAIN: ${GX_DOMAIN:-}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # certificate + key — persist this volume
+      - caddy_config:/config
+    depends_on:
+      - gaia-x-hosting
 
-# volumes:
-#   caddy_data:
-#   caddy_config:
+  # ── gx automation tool (on demand only) ──────────────────────────────────────
+  gx:
+    build: ./automation
+    profiles: ["tools"]
+    environment:
+      GX_ENV: ${GX_ENV:-dev}
+      GX_DOMAIN: ${GX_DOMAIN:-}
+    volumes:
+      - ./static:/repo/static                          # the only place gx writes to
+      - ./automation/config:/repo/automation/config:ro
+      - caddy_data:/caddy-data:ro                      # dev: Caddy's certificate and key
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy_data:
+  caddy_config:

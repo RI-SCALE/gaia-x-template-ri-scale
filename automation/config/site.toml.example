@@ -1,0 +1,33 @@
+# Copy to site.toml (git-ignored) and fill in. Overrides base.toml and <env>.toml.
+
+[identity]
+# Permanent: did:web and every VC URL derive from it. With docker compose, GX_DOMAIN
+# in .env sets it (and wins over this line); set it here only when running gx directly.
+# domain = "gaia-x.example.eu"
+
+[legal]
+name = "Stichting EGI"                # exactly as in the official registry
+registration_type = "lei-code"        # lei-code | vat-id | eori | tax-id | country-company-number (no EUID)
+registration_number = "REPLACE-ME"    # validated against the real registry, even in dev
+
+# gx:Address is a closed shape: "gx:countryCode" (ISO 3166-1, required) plus, optionally,
+# "gx:countryName", "vcard:street-address", "vcard:locality", "vcard:postal-code",
+# "vcard:region" (NUTS-2 code, e.g. "NL32"). ISO 3166-2 subdivision codes are NOT accepted.
+[legal.headquarters_address]
+"gx:countryCode" = "NL"
+
+[legal.legal_address]
+"gx:countryCode" = "NL"
+
+# Prod only: the chosen GXDCH operator's hosts.
+# [gxdch]
+# notary = "https://<operator-notary>/v2"
+# registry = "https://<operator-registry>/v2"
+# compliance = "https://<operator-compliance>/v2"
+# ces = "https://<operator-ces>"
+
+# Running gx outside the container with certbot instead of Caddy (dev):
+# [cert]
+# chain_file = "/etc/letsencrypt/live/{domain}/fullchain.pem"
+# [signer]
+# key_file = "/etc/letsencrypt/live/{domain}/privkey.pem"

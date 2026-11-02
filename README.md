@@ -16,6 +16,8 @@ The first two exist before you request any credential. The other four are added 
 **Documentation**
 - [`gaia-x-dev-test.md`](gaia-x-dev-test.md) — free dry-run against the GAIA-X lab. **Start here.**
 - [`gaia-x-onboarding.md`](gaia-x-onboarding.md) — production onboarding, certificate choice, renewals.
+- [`automation/`](automation/README.md) — the `gx` tool, which does the workflow below (and renewals)
+  for you. Dev only for now.
 
 > ### This deployment *is* the production deployment
 > The project — compose file, nginx config, scripts, URL layout — is identical in dev and
@@ -35,10 +37,11 @@ The first two exist before you request any credential. The other four are added 
 
 - A **permanent** public domain with HTTPS on port 443 (`did:web` allows plain HTTP only on localhost)
 - Docker + Docker Compose
-- Python 3.9+ and `pip install cryptography`
+- For the manual workflow only: Python 3.10+ and `pip install cryptography` (the `gx` tool brings
+  its own container)
 - A certificate:
-  - **dev/test** — Let's Encrypt is accepted
-  - **production** — **EV SSL** as a PKCS#12 `.p12`/`.pfx`, with an **exportable** private key
+  - **dev/test** — Let's Encrypt is accepted (with `gx`, Caddy's certificate is used)
+  - **production** — **EV SSL**.
 
 > ⚠️ **Never commit the private key.** It is the root of trust for every credential you issue.
 > `.gitignore` already excludes key material and all generated per-deployment files — still
@@ -84,10 +87,12 @@ the EV SSL OID. Add `--strict` to make it exit non-zero (useful in CI).
 docker compose up -d      # listens on 127.0.0.1:8080; point your proxy at it
 ```
 
-**Option B — nginx + Caddy** (auto-HTTPS via Let's Encrypt): uncomment the `caddy` service in
-`docker-compose.yml`, replace `YOUR_DOMAIN`, open ports 80 and 443, then `docker compose up -d`.
+**Option B — nginx + Caddy** (auto-HTTPS via Let's Encrypt): `cp .env.example .env`, set
+`GX_DOMAIN` (`COMPOSE_PROFILES=caddy` enables Caddy), open ports 80 and 443, then
+`docker compose up -d`.
 
-Caddy's certificate is the **web server's TLS** certificate and is unrelated to `static/cert.pem`.
+Caddy's certificate is the **web server's TLS** certificate. In production it is unrelated to
+`static/cert.pem`; in a dev run with `gx` it doubles as the identity certificate.
 
 ### 4 — Verify before requesting anything
 
@@ -140,8 +145,10 @@ Not a one-off task:
 | What | Interval |
 |---|---|
 | Compliance VC re-submission | ~90 days |
-| Identity certificate → new key → new `did.json` → **re-sign everything** | annually |
+| Identity certificate → new `did.json` if the key changes → **re-sign everything** | at most 200 days for public TLS/EV certificates since 15 March 2026, 100 days from 15 March 2027 (Let's Encrypt: 90) |
 | CES re-publish, if you push there at all | every new Compliance VC requires re-publishing |
+
+In dev, `gx run` handles all of these; scheduled daily it only acts when something is due.
 
 ---
 
@@ -149,13 +156,16 @@ Not a one-off task:
 
 ```
 gaia-x-hosting/
-├── docker-compose.yml                   # nginx (+ optional Caddy for auto-HTTPS)
+├── docker-compose.yml                   # nginx (+ Caddy for auto-HTTPS, + gx tool on demand)
+├── .env.example                         # -> .env: domain, environment, compose profiles
 ├── gaia-x-dev-test.md                   # lab dry-run runbook  ← start here
 ├── gaia-x-onboarding.md                 # production onboarding + certificate choice
 ├── .gitignore                           # keeps keys & per-deployment files out of git
 ├── nginx/nginx.conf                     # serves the six files with correct types + CORS
+├── caddy/Caddyfile                      # automatic HTTPS (Let's Encrypt)
+├── automation/                          # gx tool: config/, gx/ package, Dockerfile, README.md
 ├── scripts/
-│   └── generate_did_json.py             # cert -> did.json, plus chain/EV-OID checks
+│   └── generate_did_json.py             # cert -> did.json, plus chain/EV-OID checks (manual path)
 └── static/                              # the real files below are git-ignored
     ├── cert.pem.example
     ├── .well-known/

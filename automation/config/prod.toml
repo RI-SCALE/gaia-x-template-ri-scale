@@ -1,0 +1,26 @@
+# Prod = real identity with an EV SSL certificate on a production GXDCH.
+# NOT READY: the Vault signer is a stub (see automation/README.md, "Production").
+# The config loader refuses lab test paths, non-EV certificates and file keys here.
+
+[gxdch]
+# Pick ONE operator from https://wizard.lab.gaia-x.eu/api/clearing-houses and use its
+# three hosts consistently (all on /v2). Set them in site.toml.
+notary = ""
+registry = ""
+compliance = ""
+ces = ""   # not in the operator list: ask the operator for its CES URL
+
+[cert]
+# The EV chain as delivered by the CA (leaf first). The tool appends the self-signed root.
+chain_file = "certs/identity-chain.pem"
+require_ev = true
+extra_roots = []
+
+[signer]
+backend = "vault"
+vault_addr = "http://vault:8200"
+mount = "transit"
+key_name = "gx-identity"
+
+[ces]
+enabled = true
