@@ -1,28 +1,25 @@
-# GAIA-X identity hosting — two deployment options:
+# GAIA-X identity hosting. Settings come from .env (copy .env.example).
+# Which services run is chosen in .env - see automation/README.md, "Choose your setup".
 #
-#   Option A (default): nginx only, port 80.
-#       Use when you already have a reverse proxy (Traefik, another nginx, load balancer)
-#       in front of this container that terminates HTTPS on port 443.
-#       The did:web spec requires HTTPS in production — plain HTTP only works on localhost.
+#   gaia-x-hosting (always)  nginx; serves static/ on 127.0.0.1:8080.
+#   caddy   (profile caddy)  automatic HTTPS via Let's Encrypt on ports 80/443. Leave it
+#                            off if another reverse proxy already terminates HTTPS here.
+#                            The did:web spec requires HTTPS.
+#   openbao (profile vault)  holds the identity key (setup A). Reachable only on the
+#                            internal network "vault"; locked after every restart.
+#   gx, openbao-admin (profile tools)  run on demand, never by `up`:
+#                            docker compose run --rm gx status
+#                            automation/openbao/admin.sh ...
 #
-#   Option B: nginx + Caddy (uncomment the caddy service below).
-#       Caddy automatically obtains and renews a Let's Encrypt certificate for your domain.
-#       No manual certificate management needed. Requires the server to be publicly reachable
-#       on ports 80 and 443 (for the ACME HTTP-01 challenge).
-#
-# NOTE — two unrelated certificates are involved, do not confuse them:
-#   * the WEB SERVER TLS certificate (Caddy's, or your proxy's). Let's Encrypt is fine here,
-#     in production too. It only secures the HTTPS connection.
-#   * the IDENTITY certificate, served as static/cert.pem and referenced by x5u in did.json.
-#     This one signs your credentials and must be EV SSL in production (an eIDAS QTSP can
-#     issue one — see gaia-x-onboarding.md Step 1).
-#
-# This file is identical in dev and production; only static/ contents and the GXDCH
-# endpoints you talk to change.
+# Two certificates are involved, do not confuse them:
+#   * the WEB SERVER certificate (Caddy's, or your proxy's): only secures HTTPS.
+#   * the IDENTITY certificate, served as static/cert.pem and named in did.json. Its key
+#     signs the credentials. Setup A: your organisation's certificate, key in OpenBao.
+#     Setup B (compose.letsencrypt.yml): Caddy's certificate doubles as the identity.
 
 services:
 
-  # ── Option A: nginx static file server (HTTP only) ───────────────────────────
+  # ── nginx static file server (HTTP only) ─────────────────────────────────────
   gaia-x-hosting:
     image: nginx:1.27-alpine
     restart: unless-stopped
@@ -47,24 +44,80 @@ services:
       - /var/cache/nginx
       - /var/run
 
-  # ── Option B: Caddy reverse proxy with automatic HTTPS ───────────────────────
-  # Uncomment the block below to add auto-HTTPS via Let's Encrypt.
-  # Replace YOUR_DOMAIN with your actual domain before starting.
-  # Prerequisite: ports 80 and 443 must be reachable from the internet.
-  #
-  # caddy:
-  #   image: caddy:2-alpine
-  #   restart: unless-stopped
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - caddy_data:/data          # stores the certificate — persist this volume
-  #     - caddy_config:/config
-  #   command: caddy reverse-proxy --from YOUR_DOMAIN --to gaia-x-hosting:80
-  #   depends_on:
-  #     - gaia-x-hosting
+  # ── Caddy reverse proxy with automatic HTTPS ─────────────────────────────────
+  # Prerequisite: ports 80 and 443 reachable from the internet (ACME HTTP-01).
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      GX_DOMAIN: ${GX_DOMAIN:-}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # certificate + key — persist this volume
+      - caddy_config:/config
+    depends_on:
+      - gaia-x-hosting
 
-# volumes:
-#   caddy_data:
-#   caddy_config:
+  # ── OpenBao: the identity key (setup A) ──────────────────────────────────────
+  # No published port: only gx and openbao-admin reach it, over the internal network.
+  # After a restart it is sealed until `automation/openbao/admin.sh unseal`.
+  openbao:
+    image: openbao/openbao:2.7.1
+    profiles: ["vault"]
+    restart: unless-stopped
+    command: server
+    volumes:
+      - ./automation/openbao/config.hcl:/openbao/config/config.hcl:ro
+      - openbao_data:/openbao/file   # encrypted key store - back it up with the unseal key
+    networks:
+      - vault
+    security_opt:
+      - no-new-privileges:true
+
+  # Admin tool for the key (OpenBao CLI + openssl); used only via automation/openbao/admin.sh.
+  openbao-admin:
+    build: ./automation/openbao
+    profiles: ["tools"]
+    environment:
+      BAO_ADDR: http://openbao:8200
+      GX_DOMAIN: ${GX_DOMAIN:-}
+    volumes:
+      - ./certs:/certs              # writes the public chain
+      - ./secrets:/secrets          # writes gx's sign-only token
+    tmpfs:
+      - /work:mode=0700             # the only place key material ever is, in RAM
+    networks:
+      - vault                       # internal only: no internet access
+
+  # ── gx automation tool (on demand only) ──────────────────────────────────────
+  # Setup A: never sees a private key - it only asks OpenBao to sign.
+  # Setup B: compose.letsencrypt.yml adds Caddy's certificate storage.
+  gx:
+    build: ./automation
+    profiles: ["tools"]
+    environment:
+      GX_ENV: ${GX_ENV:-dev}
+      GX_DOMAIN: ${GX_DOMAIN:-}
+    volumes:
+      - ./static:/repo/static                          # the only place gx writes to
+      - ./automation/config:/repo/automation/config:ro
+      - ./certs:/repo/certs:ro                         # public identity chain (setup A)
+      - ./secrets:/run/secrets/gx:ro                   # sign-only OpenBao token (setup A)
+    networks:
+      - default                                        # internet: Gaia-X services
+      - vault                                          # OpenBao
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  vault:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  openbao_data:

@@ -1,0 +1,69 @@
+# Settings shared by every environment.
+# Load order (later wins): base.toml -> dev.toml | prod.toml -> site.toml -> GX_* env vars.
+# Organisation data (domain, legal name, registration number) goes into site.toml,
+# which is git-ignored. Secrets never go into any of these files.
+
+[identity]
+key_id = "key-1"        # verification method: did:web:<domain>#key-1
+alg = "auto"            # auto = RS256 for RSA keys, ES256/ES384/ES512 for EC keys
+# Where the identity certificate and its key come from (automation/README.md, "Choose your setup"):
+#   "vault"        your organisation's certificate; the key lives in OpenBao and gx only asks it to sign
+#   "letsencrypt"  Caddy's Let's Encrypt certificate and key file (dev only, no other certificate at all)
+# With docker compose the setup is chosen in .env; compose.letsencrypt.yml sets GX_IDENTITY.
+source = "vault"
+
+[vault]
+# OpenBao Transit engine (the HashiCorp Vault API). Paths as seen inside the gx container.
+address = "http://openbao:8200"
+mount = "transit"
+key_name = "gx-identity"
+token_file = "/run/secrets/gx/openbao-token"   # sign-only token written by automation/openbao/admin.sh
+chain_file = "certs/identity-chain.pem"         # public chain written by `admin.sh import`
+extra_roots = []
+
+[letsencrypt]
+# Caddy's certificate storage, mounted read-only at /caddy-data by compose.letsencrypt.yml.
+chain_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.crt"
+key_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.key"
+# Fallback when the chain's AIA URL cannot be followed (the normal path needs none of these).
+extra_roots = [
+  "https://letsencrypt.org/certs/isrgrootx1.pem",
+  "https://letsencrypt.org/certs/isrg-root-x2.pem",
+]
+
+[paths]
+# Relative paths resolve against the gaia-x-hosting directory.
+static_dir = "static"
+# Same filesystem as static/ (atomic renames). nginx answers 404 for it.
+staging_dir = "static/.staging"
+
+[files]
+# Path under static/ == URL path under https://<domain>/.
+# PERMANENT once anything is signed: every VC carries its own URL as its id.
+lrn = "gaia-x/lrn.jwt"
+legal_person = "gaia-x/legal-person.jwt"
+tandc = "gaia-x/tandc.jwt"
+compliance = "gaia-x/compliance-vc.jwt"
+
+[renewal]
+cert_min_days = 14       # refuse to issue with an identity certificate expiring sooner
+vc_renew_days = 21       # re-issue when the Compliance VC has fewer days left
+vc_validity_days = 90    # validUntil of our self-signed VCs and the VP
+
+[credentials]
+# Must be one of the values gx:IssuerShape accepts; the preflight step checks it
+# against the Registry. Changing it means accepting new Gaia-X terms: a human decision.
+# Accepted on 2026-10-27: 4bd7554097444c960292b4726c2efa1373485e8a5565d94d41195214c5e0ceb3,
+#                         067dcac5efd18c1927deb1ffed3feab6d0ad044c0a9a263e6d5d8bdc43224515
+tandc_hash = "4bd7554097444c960292b4726c2efa1373485e8a5565d94d41195214c5e0ceb3"
+# JSON-LD contexts, as in the lab Registry's own credentials (2026-10-27).
+contexts_legal_person = [
+  "http://schema.org/",
+  "https://www.w3.org/ns/credentials/v2",
+  "https://w3id.org/gaia-x/development#",
+]
+contexts_tandc = [
+  "https://www.w3.org/ns/credentials/v2",
+  "https://w3id.org/gaia-x/development#",
+]
+shapes_version = "development"   # Registry /shapes/<version> used for the T&C pre-flight check

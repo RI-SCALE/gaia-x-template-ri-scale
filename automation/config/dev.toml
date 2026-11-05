@@ -1,0 +1,14 @@
+# Dev = dry run against the Gaia-X lab ("Playground"). Any trusted certificate works here.
+# The config loader refuses non-lab endpoints and CES pushes in this environment.
+
+[gxdch]
+notary = "https://registrationnumber.notary.lab.gaia-x.eu/development"
+registry = "https://registry.lab.gaia-x.eu/development"
+compliance = "https://compliance.lab.gaia-x.eu/development"
+ces = ""   # never push lab test credentials: the lab CES is world-readable
+
+[cert]
+require_ev = false
+
+[ces]
+enabled = false

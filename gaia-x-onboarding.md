@@ -106,9 +106,14 @@ An **EV SSL certificate** from any CA/Browser Forum member, ideally an eIDAS QTS
 legal existence, physical address, domain control and a callback to your published phone number.
 **1–5 days, €100–300/yr**, delivered as PKCS#12.
 
-Ask the CA for written confirmation that the certificate carries policy OID `2.23.140.1.1`, and
-that **the private key is exportable** — a key locked into a hardware token (QSCD) cannot sign
-from a script, which rules out automated renewals (Step 5).
+Ask the CA for written confirmation that the certificate carries policy OID `2.23.140.1.1`.
+**Decide where the private key will live before ordering**, and generate the key and CSR there
+instead of letting the CA generate them. Every renewal (Step 5) signs with this key, so it must
+be reachable by whatever does the renewals; with the `gx` tool that is a key held in OpenBao
+(an open-source secrets vault, run as a container next to nginx, that signs on request and
+never hands the key out), never a file on the web host. A key the CA delivers in a PKCS#12
+file can be imported into OpenBao instead ([`automation/README.md`](automation/README.md),
+"Choose your setup").
 
 | Environment | Certificate |
 |---|---|
@@ -229,7 +234,7 @@ A claim about your official registration identifier. **Issued and signed by the 
 ```
 GET https://<operator-notary>/v2/registration-numbers/{type}/{value}
       ?vcId=<url-encoded URL where you will publish this VC>
-      &subjectId=did:web:your.domain.eu
+      &subjectId=<the same URL>#cs
 ```
 
 | `{type}` | Notary | Wizard UI |
@@ -246,12 +251,15 @@ GET https://<operator-notary>/v2/registration-numbers/{type}/{value}
 ##### 3b. Legal Person VC
 Describes your organisation. References the Legal Registration Number VC.
 
-| Field | Description |
+| Field (`credentialSubject`) | Description |
 |---|---|
-| `gx:legalName` | Registered legal name |
-| `gx:legalRegistrationNumber` | Reference to the credential above |
-| `gx:headquarterAddress` | `{ "gx:countrySubdivisionCode": "XX-YY" }` (ISO 3166-2) |
+| `schema:name` | Registered legal name |
+| `gx:registrationNumber` | `{ "id": "<LRN URL>#cs" }`, the LRN's subject (pass the same value as the Notary's `subjectId`) |
+| `gx:headquartersAddress` | `{ "type": "gx:Address", "gx:countryCode": "NL" }` (ISO 3166-1; optional vCard street, locality, postal code, NUTS-2 region) |
 | `gx:legalAddress` | Same structure as above |
+
+Field names as in the lab Registry's own Legal Person VC and SHACL shapes, checked 2026-10-27.
+`gx:Address` is a closed shape: ISO 3166-2 subdivision codes are not accepted.
 
 ##### 3c. Terms & Conditions VC
 A self-signed declaration of acceptance. In Loire/v2 this is a single hash field:
@@ -271,7 +279,9 @@ A self-signed declaration of acceptance. In Loire/v2 this is a single hash field
 The hash is a fixed constant per Trust Framework release. The value above is the one the
 registry itself uses as of 2026-09-15; there is **no public registry endpoint that returns it**. Re-check it against
 [`terms-and-conditions-credential.service.ts`](https://gitlab.com/gaia-x/lab/compliance/gx-registry/-/blob/development/src/registry-identity/services/terms-and-conditions-credential.service.ts)
-before onboarding, or let the Wizard fill it in.
+before onboarding, or let the Wizard fill it in. The values the Compliance Service accepts are
+listed in `gx:IssuerShape` of `https://<registry>/shapes/development` (on 2026-10-27: the value
+above and `067dcac5efd18c1927deb1ffed3feab6d0ad044c0a9a263e6d5d8bdc43224515`).
 
 ---
 
@@ -338,7 +348,9 @@ nginx serves them the moment they land. Nothing is published before this step.
 
 #### Option 2 — submit the VP yourself (scriptable, recommended for renewals)
 
-Bundle the three signed VC-JWTs into a **VP-JWT** and POST it:
+The [`gx` tool](automation/README.md) automates this option end to end, signing through OpenBao
+(tested in the lab; production needs the EV certificate). By hand: bundle the three signed
+VC-JWTs into a **VP-JWT** and POST it:
 
 ```bash
 VCID=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" \
@@ -422,7 +434,7 @@ change afterwards. `nginx/nginx.conf` in this repo already serves all six correc
 | What | Interval | Consequence |
 |---|---|---|
 | Compliance VC | ~90 days (observed) | re-submit the VP — Option 2 above is scriptable for exactly this |
-| Identity certificate | annually | new key pair → regenerate `did.json` → **re-sign every credential** |
+| Identity certificate | ≤200 days since 15 March 2026, ≤100 days from 15 March 2027 (CA/Browser Forum) | if the key changes: regenerate `did.json` → **re-sign every credential** |
 | CES entry, if you push at all | same as Compliance VC | ~1 year retention, otherwise you drop off |
 
 #### Optional: publish to the Credential Event Service (CES)
@@ -523,7 +535,7 @@ Optional Label Levels are not required for basic interoperability:
 [ ] GXDCH operator chosen from the live meta-registry; its evsslonly flag checked
 [ ] EV SSL certificate ordered, CA confirmed policy OID 2.23.140.1.1 is present
       (an eIDAS QTSP can issue one; a Qualified Certificate for eSeal cannot be used)
-[ ] Private key exportable and kept secret (not locked in a non-exportable QSCD)
+[ ] Private key kept where renewals can use it (OpenBao with the gx tool), never committed
 [ ] Permanent public domain with HTTPS on port 443
 [ ] cert.pem = full chain ENDING IN A SELF-SIGNED ROOT; last cert has subject == issuer
 [ ] did.json at /.well-known/did.json, x5u pointing at the live cert.pem

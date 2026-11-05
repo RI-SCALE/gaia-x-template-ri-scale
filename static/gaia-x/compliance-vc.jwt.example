@@ -24,5 +24,8 @@ next to it, but only the JWT at the vcid URL counts.
 
 Expiry: ~90 days observed. Schedule a re-submission job (gaia-x-onboarding.md Step 5).
 
-Contents: credentialSubject is a list of {id, integrity} pointers to the three VCs you
-submitted. No endpoints, no dataset information - it attests participant status only.
+Contents (lab, 2026-11-02): type gx:ParticipantComplianceCredential. Its credentialSubject
+lists the three VCs you submitted under gx:compliantCredentials as {id, gx:credentialType,
+digestSRI}. digestSRI = "sha256-" + hex SHA-256 of the VC's decoded payload in JCS (RFC 8785)
+canonical form, so republishing a different copy of any of the three breaks it. No endpoints,
+no dataset information - it attests participant status only.

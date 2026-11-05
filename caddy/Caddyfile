@@ -1,0 +1,23 @@
+# Automatic HTTPS in front of nginx. GX_DOMAIN comes from .env.
+#
+# Setup A (default): this certificate only secures HTTPS; the identity certificate is
+# your organisation's own. Setup B (compose.letsencrypt.yml): this Let's Encrypt
+# certificate is ALSO the Gaia-X identity certificate, which is what the tls options
+# below are for. They are harmless in setup A. See automation/README.md, "Choose your setup".
+{
+	# email admin@example.eu   # optional: Let's Encrypt expiry/problem notices
+}
+
+{$GX_DOMAIN} {
+	tls {
+		# Let's Encrypt only. Without an explicit issuer Caddy may fall back to
+		# ZeroSSL, which gives a different chain and root.
+		issuer acme
+		# RSA, the same family as the expected production EV certificate (RS256).
+		key_type rsa2048
+		# Keep the key across renewals (Caddy's default is a new key per certificate),
+		# so did.json and the signed credentials stay valid when Caddy renews.
+		reuse_private_keys
+	}
+	reverse_proxy gaia-x-hosting:80
+}

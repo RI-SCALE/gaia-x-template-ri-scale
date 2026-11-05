@@ -1,0 +1,17 @@
+# Prod = real identity with an EV SSL certificate on a production GXDCH.
+# The config loader refuses lab test paths, non-EV certificates and the Let's Encrypt setup here:
+# the key must be in OpenBao (identity.source = "vault", the default).
+
+[gxdch]
+# Pick ONE operator from https://wizard.lab.gaia-x.eu/api/clearing-houses and use its
+# three hosts consistently (all on /v2). Set them in site.toml.
+notary = ""
+registry = ""
+compliance = ""
+ces = ""   # not in the operator list: ask the operator for its CES URL
+
+[cert]
+require_ev = true
+
+[ces]
+enabled = true

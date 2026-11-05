@@ -26,6 +26,24 @@ static/gaia-x/*.jwt
 !static/gaia-x/.gitkeep
 !static/gaia-x/*.example
 
+# Credentials staged by the gx tool before they are published.
+static/.staging/
+
+# Public identity certificate chain, written by automation/openbao/admin.sh import.
+certs/
+# gx's sign-only OpenBao token, written by automation/openbao/admin.sh.
+secrets/
+
+# ── Deployment settings (domain, legal data) ─────────────────────────────────
+.env
+automation/config/site.toml
+
 # ── Caddy / runtime ──────────────────────────────────────────────────────────
 caddy_data/
 caddy_config/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/

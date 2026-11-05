@@ -52,6 +52,9 @@ against the development environment" mode. Therefore, two types of a test sugges
 **Do Path A first** (it is free and instant and de-risks Step 0), then **do Path B** — B is the
 one that actually validates the deployment. Path B does **not** use the Wizard.
 
+Path B can be run by hand (Steps 1–5) or by the `gx` tool in a few commands: see
+[Automated dev run](#automated-dev-run-the-gx-tool) after Step 0.
+
 ---
 
 ## Environment: use the `development` deployment path
@@ -82,8 +85,8 @@ must be genuine.
 |---|---|---|
 | 1 | **Registered legal name**, exactly as in the official registry | `Stichting EGI` |
 | 2 | **Registration number + type** (see below) | LEI `9695007587FA72F7E115` or VAT `NL123456789B01` |
-| 3 | **Headquarters address** as ISO 3166-2 subdivision code | `NL-NH` |
-| 4 | **Legal address** as ISO 3166-2 subdivision code (often the same) | `NL-NH` |
+| 3 | **Headquarters address**: country as ISO 3166-1 code | `NL` |
+| 4 | **Legal address**: country as ISO 3166-1 code (often the same) | `NL` |
 
 **Accepted number types.** The Notary supports five; the Wizard UI only offers three:
 
@@ -96,7 +99,34 @@ must be genuine.
 | `country-company-number` | yes | no |
 
 - **Prefer LEI**, then VAT. **EUID is not supported** by the Notary.
-- ISO 3166-2 = `COUNTRY-REGION`. Look up at <https://en.wikipedia.org/wiki/ISO_3166-2>.
+- Addresses: the current `gx:Address` shape is closed. It takes `gx:countryCode` (ISO 3166-1,
+  required) and optionally street, locality, postal code and a NUTS-2 `vcard:region`. **ISO 3166-2
+  subdivision codes (`NL-NH`) are no longer accepted.** Checked against the Registry's SHACL
+  shapes on 2026-10-27.
+
+---
+
+## Automated dev run: the `gx` tool
+
+The `gx` tool in [`automation/`](automation/) does Path B (Steps 1–5 below) for you. It runs
+on the hosting machine as a compose service. The manual steps below stay as the reference for
+what it does.
+
+| Automated | Still yours |
+|---|---|
+| `cert.pem` (identity certificate + self-signed root), `did.json` | Step 0 legal data (once, in a config file) |
+| Pre-flight checks: signing key, live files, Registry chain check, T&C hash | DNS for the domain, ports 80/443 open |
+| LRN from the Notary; Legal Person, T&C and VP signed | Importing the organisation's certificate (`.p12`) into OpenBao, once per certificate |
+| Submission, validation and publishing of the Compliance VC | Reading the error if Gaia-X refuses something |
+| Renewal: re-runs re-issue when the Compliance VC nears expiry or the key changes | |
+
+The identity certificate is the organisation's own (e.g. from HARICA), with its key kept in
+OpenBao, an open-source secrets vault that runs as a container next to nginx and signs for the
+tool, so the key never sits in a file on the host. Without any certificate, Caddy's Let's
+Encrypt certificate can double as the identity instead. Either way the `certbot` command of Step 1 isn't needed.
+
+**How to set it up and run it:** [`automation/README.md`](automation/README.md), sections
+*Choose your setup* and *Getting started*.
 
 ---
 
@@ -231,16 +261,21 @@ hosting.
 1. **Get the Legal Registration Number VC** from the lab Notary (it counter-signs it):
 
    ```bash
-   VCID=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" \
-          "https://gaia-x.our-domain.eu/gaia-x/lrn.jwt")
-   curl "https://registrationnumber.notary.lab.gaia-x.eu/development/registration-numbers/lei-code/<OUR-LEI>?vcId=$VCID&subjectId=did:web:gaia-x.our-domain.eu"
+   LRN=https://gaia-x.our-domain.eu/gaia-x/lrn.jwt
+   curl -G "https://registrationnumber.notary.lab.gaia-x.eu/development/registration-numbers/lei-code/<OUR-LEI>" \
+        --data-urlencode "vcId=$LRN" --data-urlencode "subjectId=$LRN#cs"
    ```
-   Save the response to `static/gaia-x/lrn.jwt` so the URL above resolves.
+   Save the response to `static/gaia-x/lrn.jwt` so the URL above resolves. The Notary uses
+   `subjectId` as the LRN's `credentialSubject.id`, and the Legal Person VC points at it through
+   `gx:registrationNumber`, so pass `<LRN URL>#cs` (the convention in the Compliance Service's
+   own examples), not the DID.
 
 2. **Author and sign the Legal Person VC and the Terms & Conditions VC** with our key, as
-   enveloped VC-JWTs (`RS256` or `ES256`, matching the key type in `did.json`). The JWT `kid`
-   must be our verification method, e.g. `did:web:gaia-x.our-domain.eu#key-1`. Publish each at
-   the URL reserved in Step 2.
+   enveloped VC-JWTs (`RS256` or `ES256`, matching the key type in `did.json`; the lab accepts
+   both). `iss` (our DID) and `kid` (our verification method, e.g.
+   `did:web:gaia-x.our-domain.eu#key-1`) are mandatory **protected headers**. Publish each at
+   the URL reserved in Step 2. The exact payloads `gx` produces are in
+   `automation/gx/credentials.py`.
 
 3. **Bundle all three into a Verifiable Presentation** and sign it with the same key
    (VP-JWT, per [W3C vc-jose-cose](https://www.w3.org/TR/vc-jose-cose/#with-jose)).
@@ -315,8 +350,9 @@ attests that we are a conformant participant.
 ## Quick checklist
 
 ```
-[ ] Step 0  Legal name, registration number (LEI preferred; NOT EUID), HQ + legal ISO 3166-2 codes
+[ ] Step 0  Legal name, registration number (LEI preferred; NOT EUID), HQ + legal country codes
 [ ] Path A  Wizard smoke test passes -> legal data + number are acceptable
+[ ] gx      (automated alternative to Steps 1-5) `gx run -i` ends with "Result: renewed"
 [ ] Step 1  LE cert obtained; cert.pem = fullchain + self-signed root; last cert is self-signed
 [ ] Step 2  did.json generated; did.json + cert.pem serve 200 with CORS *; VC URLs reserved
 [ ] Step 3  DID resolves AND trustAnchor/chain/file returns {"result":true} on /development
