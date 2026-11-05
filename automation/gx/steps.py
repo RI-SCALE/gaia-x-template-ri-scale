@@ -29,13 +29,22 @@ from gx.chain import (
     did_document,
     has_ev_oid,
     load_chain,
+    order_chain,
     to_pem,
 )
 from gx.config import Config
-from gx.constants import ALG_AUTO, ATTESTED_CREDENTIALS, CREDENTIAL_ORDER, DID_WEB_PREFIX, VP_STAGING_FILE
+from gx.constants import (
+    ALG_AUTO,
+    ATTESTED_CREDENTIALS,
+    CREDENTIAL_ORDER,
+    DID_WEB_PREFIX,
+    SOURCE_VAULT,
+    VP_STAGING_FILE,
+)
 from gx.errors import SignerError, StepError
 from gx.jws import PublicKey
 from gx.pipeline import Context, Decision, Step
+from gx.signers import TransitSigner
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -115,12 +124,12 @@ class CertStep(Step):
         cfg = ctx.cfg
         source = read_text(cfg.chain_file)
         if source is None:
-            raise StepError(
-                f"no certificate chain at {cfg.chain_file}. Dev: is Caddy running for {cfg.domain} and has it "
-                "obtained its certificate? Prod: place the CA's chain file there."
-            )
+            raise StepError(f"no certificate chain at {cfg.chain_file}. " + (
+                "Import the identity first: `automation/openbao/admin.sh import <file.p12>`."
+                if cfg.source == SOURCE_VAULT else
+                f"Is Caddy running for {cfg.domain}, and has it obtained its certificate?"))
         try:
-            chain = complete_chain(load_chain(source), ctx.http.fetch, cfg.extra_roots)
+            chain = complete_chain(order_chain(load_chain(source)), ctx.http.fetch, cfg.extra_roots)
         except ValueError as e:
             raise StepError(f"{cfg.chain_file}: {e}") from None
         leaf = chain[0]
@@ -176,9 +185,34 @@ class DidStep(Step):
         return f"wrote {ctx.cfg.did_path}"
 
 
+def check_signer(ctx: Context) -> str:
+    """Is the signing key usable, and does it belong to cert.pem? Never reads a private key.
+
+    OpenBao: reachable, unsealed, token accepted, key present and matching (only its
+    public part is read). Let's Encrypt: the key file exists; it is read only when signing.
+    """
+    cfg = ctx.cfg
+    if cfg.source != SOURCE_VAULT:
+        key_file = Path(cfg.signer["key_file"])
+        if not key_file.is_file():
+            raise StepError(f"Caddy's key file {key_file} is missing")
+        return f"Let's Encrypt key file present ({key_file.name})"
+    try:
+        signer = ctx.signer
+    except SignerError as e:
+        raise StepError(str(e)) from None
+    if not isinstance(signer, TransitSigner):
+        raise StepError(f"identity source {cfg.source!r} expects the OpenBao signer")
+    pem = read_text(cfg.cert_path) or read_text(cfg.chain_file)
+    if pem is not None and _spki(signer.public_key()) != _spki(order_chain(load_chain(pem))[0].public_key()):
+        raise StepError(f"the key {signer.key_name!r} in OpenBao does not belong to the identity certificate; "
+                        "import the matching .p12 (`automation/openbao/admin.sh import`)")
+    return f"OpenBao key {signer.key_name!r} v{signer.version} ({signer.alg}) matches the certificate"
+
+
 class PreflightStep(Step):
     name = "preflight"
-    title = "live checks: published files, Registry trust anchor, T&C hash"
+    title = "live checks: signing key, published files, Registry trust anchor, T&C hash"
 
     def plan(self, ctx: Context) -> Decision:
         return Decision(True, "read-only checks, run every time before anything is requested")
@@ -189,6 +223,12 @@ class PreflightStep(Step):
         pem = read_text(cfg.cert_path)
         if pem is None:
             raise StepError(f"{cfg.cert_path} does not exist; run the cert and did steps first")
+
+        # Before anything is requested from Gaia-X: can we sign at all?
+        try:
+            notes.append(check_signer(ctx))
+        except StepError as e:
+            problems.append(str(e))
 
         # The Compliance Service fetches these two over HTTPS while it validates.
         try:
@@ -222,7 +262,7 @@ class PreflightStep(Step):
 
         if problems:
             raise StepError("\n   - ".join(["pre-flight checks failed:", *problems]))
-        return "live files current, chain accepted, T&C hash accepted" + "".join(f"; note: {n}" for n in notes)
+        return "live files current, chain accepted, T&C hash accepted" + "".join(f"; {n}" for n in notes)
 
 
 class IssueStep(Step):

@@ -26,7 +26,10 @@ packages = ["gx"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-markers = ["live: talks to the Gaia-X lab and public services; skipped unless pytest runs with --live"]
+markers = [
+    "live: talks to the Gaia-X lab and public services; skipped unless pytest runs with --live",
+    "openbao: starts OpenBao in Docker; skipped unless pytest runs with --openbao (run from WSL/Linux)",
+]
 
 [tool.ruff]
 line-length = 120

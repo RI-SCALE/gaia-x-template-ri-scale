@@ -4,6 +4,7 @@ Tests marked `live` talk to the Gaia-X lab and other public services. They are s
 unless pytest runs with --live.
 """
 
+import base64
 import json
 import shutil
 from collections.abc import Callable
@@ -15,10 +16,11 @@ from typing import Any, Final
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
 
-from gx import jws
+from gx import jws, signers
 from gx.chain import public_key_to_jwk
 from gx.config import Config, load_config
 from gx.constants import (
@@ -28,6 +30,10 @@ from gx.constants import (
     ENV_VAR_HOSTING_DIR,
     ENV_VAR_KEY_PASSPHRASE,
     OID_EV_SSL,
+    OPENBAO_RENEW_SELF,
+    OPENBAO_TOKEN_HEADER,
+    SOURCE_LETSENCRYPT,
+    SOURCE_VAULT,
 )
 from gx.errors import StepError
 from gx.gxdch import Gxdch
@@ -40,6 +46,7 @@ COMPLIANCE_DID: Final[str] = "did:web:compliance.lab.gaia-x.eu:development"
 NOTARY_DID: Final[str] = "did:web:registrationnumber.notary.lab.gaia-x.eu:development"
 GXDCH_KID: Final[str] = "X509-JWK"
 OTHER_TANDC_HASH: Final[str] = "067dcac5efd18c1927deb1ffed3feab6d0ad044c0a9a263e6d5d8bdc43224515"
+OPENBAO_KEY_NAME: Final[str] = "gx-identity"   # base.toml [vault] key_name
 
 PrivateKey = rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey
 
@@ -48,15 +55,18 @@ PrivateKey = rsa.RSAPrivateKey | ec.EllipticCurvePrivateKey
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--live", action="store_true", help="also run tests against the Gaia-X lab and public services")
+    parser.addoption("--openbao", action="store_true", help="also run tests against a real OpenBao in Docker")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--live"):
-        return
-    skip = pytest.mark.skip(reason="talks to live services; run with --live")
-    for item in items:
-        if "live" in item.keywords:
-            item.add_marker(skip)
+    for marker, option, reason in (("live", "--live", "talks to live services"),
+                                   ("openbao", "--openbao", "starts OpenBao in Docker")):
+        if config.getoption(option):
+            continue
+        skip = pytest.mark.skip(reason=f"{reason}; run with {option}")
+        for item in items:
+            if marker in item.keywords:
+                item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
@@ -159,14 +169,105 @@ registration_number = "NL000000000B01"
 
 
 @dataclass
+class Response:
+    """Just enough of requests.Response for gx's HTTP clients."""
+
+    status_code: int
+    body: dict[str, Any] | None = None
+
+    @property
+    def content(self) -> bytes:
+        return json.dumps(self.body).encode() if self.body is not None else b""
+
+    @property
+    def text(self) -> str:
+        return self.content.decode()
+
+    def json(self) -> Any:
+        return self.body
+
+
+@dataclass
+class FakeOpenBao:
+    """OpenBao's Transit API in memory, as gx uses it (formats verified on OpenBao 2.7.1).
+
+    Acts as the HTTP session TransitSigner talks through. Keys are lists of versions.
+    """
+
+    token: str = "sign-only-token"
+    keys: dict[str, list[PrivateKey]] = field(default_factory=dict)
+    sealed: bool = False
+    headers: dict[str, str] = field(default_factory=dict)
+    calls: list[tuple[str, str]] = field(default_factory=list)
+
+    def request(self, method: str, url: str, json: dict[str, Any] | None = None, timeout: int = 0) -> Response:
+        path = "/" + url.split("/", 3)[3]
+        self.calls.append((method, path))
+        if self.sealed:
+            return Response(503, {"errors": ["Vault is sealed"]})
+        if self.headers.get(OPENBAO_TOKEN_HEADER) != self.token:
+            return Response(403, {"errors": ["permission denied"]})
+        if path == OPENBAO_RENEW_SELF:
+            return Response(200, {"auth": {"lease_duration": 7776000}})
+        _, _, _, action, name, *rest = path.split("/")
+        versions = self.keys.get(name)
+        if not versions:
+            return Response(404, {"errors": []})
+        if action == "keys" and method == "GET":
+            return Response(200, {"data": {
+                "name": name, "type": self.key_type(versions[-1]), "latest_version": len(versions),
+                "exportable": False,
+                "keys": {str(i + 1): {"public_key": public_pem(k)} for i, k in enumerate(versions)}}})
+        if action == "sign" and method == "POST":
+            return Response(200, {"data": {"signature": self.sign(versions, rest[0], json or {})}})
+        return Response(405, {"errors": ["unsupported"]})
+
+    @staticmethod
+    def key_type(key: PrivateKey) -> str:
+        if isinstance(key, rsa.RSAPrivateKey):
+            return f"rsa-{key.key_size}"
+        return f"ecdsa-p{key.curve.key_size}"
+
+    @staticmethod
+    def sign(versions: list[PrivateKey], hash_name: str, body: dict[str, Any]) -> str:
+        key, data = versions[-1], base64.b64decode(body["input"])
+        algorithm = {"sha2-256": hashes.SHA256(), "sha2-384": hashes.SHA384(), "sha2-512": hashes.SHA512()}[hash_name]
+        if isinstance(key, rsa.RSAPrivateKey):
+            if body.get("signature_algorithm") == "pkcs1v15":
+                rsa_padding = padding.PKCS1v15()
+            else:
+                assert body.get("salt_length") == "hash", "JOSE PS* needs salt length = digest size"
+                rsa_padding = padding.PSS(mgf=padding.MGF1(algorithm), salt_length=algorithm.digest_size)
+            value = base64.b64encode(key.sign(data, rsa_padding, algorithm)).decode()
+        else:
+            assert body.get("marshaling_algorithm") == "jws"
+            r, s = decode_dss_signature(key.sign(data, ec.ECDSA(algorithm)))
+            size = (key.curve.key_size + 7) // 8
+            value = jws.b64url(r.to_bytes(size, "big") + s.to_bytes(size, "big"))
+        return f"vault:v{len(versions)}:{value}"
+
+
+def public_pem(key: PrivateKey) -> str:
+    return key.public_key().public_bytes(serialization.Encoding.PEM,
+                                         serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+
+
+@dataclass
 class Deployment:
-    """A gaia-x-hosting checkout in a temp directory, with Caddy's certificate files simulated."""
+    """A gaia-x-hosting checkout in a temp directory.
+
+    Setup A (source "vault"): the public chain in certs/, the key in a FakeOpenBao, no key file.
+    Setup B (source "letsencrypt"): Caddy's chain and key files, simulated.
+    """
 
     root: Path
     pki: Pki
     key: PrivateKey
-    extra_toml: str = ""    # appended tables; must not repeat [identity], [legal], [cert] or [signer]
-    signer_toml: str = ""   # extra lines inside [signer]
+    source: str = SOURCE_LETSENCRYPT
+    extra_toml: str = ""    # appended tables; must not repeat [identity], [legal], [vault] or [letsencrypt]
+    source_toml: str = ""   # extra lines inside [vault] or [letsencrypt]
+    openbao: FakeOpenBao | None = None
+    openbao_address: str = "http://openbao.test:8200"
 
     @property
     def config_dir(self) -> Path:
@@ -174,30 +275,51 @@ class Deployment:
 
     @property
     def chain_file(self) -> Path:
+        if self.source == SOURCE_VAULT:
+            return self.root / "certs" / "identity-chain.pem"
         return self.root / "caddy" / f"{DOMAIN}.crt"
 
     @property
     def key_file(self) -> Path:
         return self.root / "caddy" / f"{DOMAIN}.key"
 
+    @property
+    def token_file(self) -> Path:
+        return self.root / "secrets" / "openbao-token"
+
     def write_config(self, legal: str = LEGAL_TOML) -> None:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         for name in ("base.toml", "dev.toml", "prod.toml"):
             shutil.copy(AUTOMATION_DIR / "config" / name, self.config_dir / name)
-        (self.config_dir / "site.toml").write_text(
-            f'[identity]\ndomain = "{DOMAIN}"\n{legal}\n'
-            f'[cert]\nchain_file = "{self.chain_file.as_posix()}"\n'
-            f'[signer]\nkey_file = "{self.key_file.as_posix()}"\n{self.signer_toml}\n{self.extra_toml}',
-            encoding="utf-8",
-        )
+        site = f'[identity]\ndomain = "{DOMAIN}"\nsource = "{self.source}"\n{legal}\n'
+        if self.source == SOURCE_VAULT:
+            site += (f'[vault]\naddress = "{self.openbao_address}"\nchain_file = "{self.chain_file.as_posix()}"\n'
+                     f'token_file = "{self.token_file.as_posix()}"\n')
+        else:
+            site += (f'[letsencrypt]\nchain_file = "{self.chain_file.as_posix()}"\n'
+                     f'key_file = "{self.key_file.as_posix()}"\n')
+        (self.config_dir / "site.toml").write_text(f"{site}{self.source_toml}\n{self.extra_toml}", encoding="utf-8")
 
     def install_certificate(self, key: PrivateKey | None = None, days: int = 80) -> x509.Certificate:
-        """What Caddy does on (re)issuance: leaf + intermediate (no root), and the key."""
+        """A (re)issued certificate: leaf + intermediate (no root), and its key.
+
+        Setup B: Caddy writes the key file. Setup A: the key goes into OpenBao, as a new
+        version when it changed (what `admin.sh import` does); no key file is written.
+        """
         self.key = key or self.key
         leaf = self.pki.leaf(self.key, days=days)
         self.chain_file.parent.mkdir(parents=True, exist_ok=True)
         self.chain_file.write_text(pem(leaf, self.pki.intermediate), encoding="utf-8")
-        self.key_file.write_bytes(key_pem(self.key))
+        if self.source == SOURCE_VAULT:
+            assert self.openbao is not None
+            versions = self.openbao.keys.setdefault(OPENBAO_KEY_NAME, [])
+            if not versions or versions[-1] is not self.key:
+                versions.append(self.key)
+            self.token_file.parent.mkdir(parents=True, exist_ok=True)
+            self.token_file.write_text(self.openbao.token, encoding="utf-8")
+        else:
+            self.key_file.parent.mkdir(parents=True, exist_ok=True)
+            self.key_file.write_bytes(key_pem(self.key))
         return leaf
 
     def config(self, env: str = "dev") -> Config:
@@ -210,9 +332,14 @@ class Deployment:
 
 @pytest.fixture
 def make_deployment(tmp_path: Path, pki: Pki, monkeypatch: pytest.MonkeyPatch) -> Callable[..., Deployment]:
-    def make(key: str = "rsa", extra_toml: str = "", signer_toml: str = "") -> Deployment:
+    def make(key: str = "rsa", source: str = SOURCE_LETSENCRYPT, extra_toml: str = "",
+             source_toml: str = "") -> Deployment:
         monkeypatch.setenv(ENV_VAR_HOSTING_DIR, str(tmp_path))
-        deployment = Deployment(tmp_path, pki, pki.keys[key], extra_toml, signer_toml)
+        openbao = None
+        if source == SOURCE_VAULT:
+            openbao = FakeOpenBao()
+            monkeypatch.setattr(signers, "session_factory", lambda: openbao)
+        deployment = Deployment(tmp_path, pki, pki.keys[key], source, extra_toml, source_toml, openbao)
         deployment.write_config()
         deployment.install_certificate()
         return deployment

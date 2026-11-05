@@ -1,7 +1,9 @@
 # Automatic HTTPS in front of nginx. GX_DOMAIN comes from .env.
 #
-# In dev, this Let's Encrypt certificate is ALSO the Gaia-X identity certificate
-# (the gx tool reads it from the caddy_data volume). Hence the tls options:
+# Setup A (default): this certificate only secures HTTPS; the identity certificate is
+# your organisation's own. Setup B (compose.letsencrypt.yml): this Let's Encrypt
+# certificate is ALSO the Gaia-X identity certificate, which is what the tls options
+# below are for. They are harmless in setup A. See automation/README.md, "Choose your setup".
 {
 	# email admin@example.eu   # optional: Let's Encrypt expiry/problem notices
 }

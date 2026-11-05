@@ -114,17 +114,19 @@ what it does.
 
 | Automated | Still yours |
 |---|---|
-| `cert.pem` (Caddy's Let's Encrypt certificate + self-signed root), `did.json` | Step 0 legal data (once, in a config file) |
-| Pre-flight checks: live files, Registry chain check, T&C hash | DNS for the domain, ports 80/443 open |
-| LRN from the Notary; Legal Person, T&C and VP signed | Reading the error if Gaia-X refuses something |
-| Submission, validation and publishing of the Compliance VC | |
+| `cert.pem` (identity certificate + self-signed root), `did.json` | Step 0 legal data (once, in a config file) |
+| Pre-flight checks: signing key, live files, Registry chain check, T&C hash | DNS for the domain, ports 80/443 open |
+| LRN from the Notary; Legal Person, T&C and VP signed | Importing the organisation's certificate (`.p12`) into OpenBao, once per certificate |
+| Submission, validation and publishing of the Compliance VC | Reading the error if Gaia-X refuses something |
 | Renewal: re-runs re-issue when the Compliance VC nears expiry or the key changes | |
 
-In dev, **Caddy's Let's Encrypt TLS certificate doubles as the identity certificate**, so the
-`certbot` command of Step 1 isn't needed.
+The identity certificate is the organisation's own (e.g. from HARICA), with its key kept in
+OpenBao, an open-source secrets vault that runs as a container next to nginx and signs for the
+tool, so the key never sits in a file on the host. Without any certificate, Caddy's Let's
+Encrypt certificate can double as the identity instead. Either way the `certbot` command of Step 1 isn't needed.
 
-**How to set it up and run it:** [`automation/README.md`](automation/README.md), section
-*Getting started*.
+**How to set it up and run it:** [`automation/README.md`](automation/README.md), sections
+*Choose your setup* and *Getting started*.
 
 ---
 

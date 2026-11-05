@@ -1,4 +1,4 @@
-# Dev = dry run against the Gaia-X lab with a Let's Encrypt certificate.
+# Dev = dry run against the Gaia-X lab ("Playground"). Any trusted certificate works here.
 # The config loader refuses non-lab endpoints and CES pushes in this environment.
 
 [gxdch]
@@ -8,20 +8,7 @@ compliance = "https://compliance.lab.gaia-x.eu/development"
 ces = ""   # never push lab test credentials: the lab CES is world-readable
 
 [cert]
-# Caddy's Let's Encrypt TLS certificate doubles as the identity certificate in dev.
-# Paths as seen inside the gx container (caddy_data mounted read-only at /caddy-data).
-# Running gx outside the container (e.g. with certbot)? Override both paths in site.toml.
-chain_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.crt"
 require_ev = false
-# Fallback when the chain's AIA URL cannot be followed (the normal path needs none of these).
-extra_roots = [
-  "https://letsencrypt.org/certs/isrgrootx1.pem",
-  "https://letsencrypt.org/certs/isrg-root-x2.pem",
-]
-
-[signer]
-backend = "pem"
-key_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.key"
 
 [ces]
 enabled = false

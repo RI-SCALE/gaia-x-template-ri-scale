@@ -26,8 +26,12 @@ registration_number = "REPLACE-ME"    # validated against the real registry, eve
 # compliance = "https://<operator-compliance>/v2"
 # ces = "https://<operator-ces>"
 
-# Running gx outside the container with certbot instead of Caddy (dev):
-# [cert]
+# The identity setup is chosen in .env (automation/README.md, "Choose your setup").
+# Setup A needs nothing here: automation/openbao/admin.sh puts the key into OpenBao and
+# the public chain into certs/. There is no setting for a key file of your own certificate.
+
+# Setup B, running gx outside the container with certbot instead of Caddy (dev only):
+# [identity]  ->  source = "letsencrypt"  (add to the [identity] table above)
+# [letsencrypt]
 # chain_file = "/etc/letsencrypt/live/{domain}/fullchain.pem"
-# [signer]
 # key_file = "/etc/letsencrypt/live/{domain}/privkey.pem"

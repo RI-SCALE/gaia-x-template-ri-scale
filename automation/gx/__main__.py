@@ -15,7 +15,7 @@ from gx.constants import ENVS
 from gx.errors import ConfigError, StepError
 from gx.gxdch import Gxdch
 from gx.pipeline import AutoGate, Context, Gate, InteractiveGate, Step, run_steps
-from gx.steps import STATUS_STEPS, STEPS, import_wizard_zip
+from gx.steps import STATUS_STEPS, STEPS, check_signer, import_wizard_zip
 
 
 class ExitCode(IntEnum):
@@ -51,7 +51,12 @@ def cmd_status(cfg: Config, args: argparse.Namespace) -> ExitCode:
     """Plans only: what a run would do now. Never signs, never writes, never needs the key."""
     ctx = Context(cfg, Gxdch(cfg))
     needed = False
-    print(f"env={cfg.env} domain={cfg.domain}")
+    print(f"env={cfg.env} domain={cfg.domain} identity={cfg.source}")
+    try:
+        print(f"  {'key':<6} ok       {check_signer(ctx)}")
+    except StepError as e:
+        print(f"  {'key':<6} PROBLEM  {e}")
+        needed = True
     for step in STATUS_STEPS:
         try:
             decision = step.plan(ctx)

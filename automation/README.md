@@ -7,13 +7,29 @@
 
 It runs on the hosting machine as a service of this repository's compose project.
 
-**Status (2026-11-02):** dev (Gaia-X lab) only. Implemented and validated against the live lab, except the parts that need our own public host:
-- Caddy obtaining the certificate
-- Gaia-X fetching our `did.json` and `cert.pem`
-
-The first full run on a real host is still to do. Production isn't usable yet: the Vault signer is a stub.
+**Status (2026-11-05):** dev (Gaia-X lab "Playground"). Both setups below are implemented. Setup A has been tested against a real OpenBao; everything Gaia-X-facing has been validated against the live lab. The first full run on a real host is still to do. Production uses the same code and setup A. It still needs an EV certificate and a production operator.
 
 For background on the manual workflow the tool replaces, see [`../gaia-x-dev-test.md`](../gaia-x-dev-test.md).
+
+---
+
+## Choose your setup
+
+The identity certificate's private key signs every credential, so where that key lives is the main choice. It is made in **`.env`**.
+
+**[OpenBao](https://openbao.org/)** is an open-source secrets vault (a Linux Foundation fork of HashiCorp Vault). In setup A it runs as one more container next to nginx: it keeps the private key encrypted and signs on `gx`'s behalf, so the key never leaves it.
+
+| | **Setup A: own certificate + OpenBao** (default) | **Setup B: Let's Encrypt** (fallback) |
+|---|---|---|
+| For | An organisation with its own certificate, e.g. from HARICA. Also the production setup. | An organisation with no certificate at all. Dev only. |
+| Identity certificate | Yours, handed over as a `.p12` file | Caddy's Let's Encrypt certificate |
+| Private key | Imported once into **OpenBao**, never exportable. `gx` can only ask OpenBao to sign; no key file exists on the host. | A file in Caddy's storage, read by `gx` |
+| Runs | nginx, OpenBao, Caddy (optional) | nginx, Caddy |
+| `.env` | `COMPOSE_PROFILES=caddy,vault` | `COMPOSE_PROFILES=caddy`<br>`COMPOSE_FILE=docker-compose.yml:compose.letsencrypt.yml` |
+
+**HTTPS** is a separate matter: Caddy serves it with an automatic Let's Encrypt certificate in both setups. If the host already terminates HTTPS with its own proxy, drop `caddy` from `COMPOSE_PROFILES` and point that proxy at `127.0.0.1:8080`. That works in setup A only; setup B needs Caddy's certificate.
+
+`.env.example` contains all three variants; keep exactly one active. `compose.letsencrypt.yml` gives `gx` access to Caddy's storage and sets `GX_IDENTITY=letsencrypt`. Without it, `gx` never sees a private key.
 
 ---
 
@@ -22,25 +38,22 @@ For background on the manual workflow the tool replaces, see [`../gaia-x-dev-tes
 ### What you need
 
 - **A Linux host with Docker and Docker Compose**, and a clone of this repository on it.
-- **A public DNS name for that host, with ports 80 and 443 open.** Let's Encrypt validates the name over these ports, and Gaia-X fetches `did.json` and `cert.pem` from it. The DID and every credential URL derive from this name, so pick one you intend to keep.
+- **A public DNS name for that host.** Gaia-X fetches `did.json` and `cert.pem` from it over HTTPS. With Caddy, ports 80 and 443 must be open for Let's Encrypt. The DID and every credential URL derive from this name, so pick one you intend to keep.
 - **The organisation's legal data:**
   - legal name
   - one registration number: VAT ID, LEI, EORI, tax ID or national company number
   - the country of the legal address and of the headquarters
+- **Setup A only:** the certificate as a `.p12` (or `.pfx`) file and its password. The certificate must be issued for the DNS name above, with an RSA (2048/3072/4096) or EC (P-256/384/521) key.
 
-In dev you don't need a certificate or a key of your own. Caddy obtains a Let's Encrypt certificate, and `gx` uses that certificate and its key as the identity.
-
-### 1. Set the domain
+### 1. Domain and setup
 
 ```bash
 cp .env.example .env
 ```
 
-Set `GX_DOMAIN` in `.env`. Keep the other two lines:
-- `GX_ENV=dev`
-- `COMPOSE_PROFILES=caddy`, which starts Caddy for HTTPS
+Set `GX_DOMAIN`, and keep the setup block you chose (see above).
 
-### 2. Enter the legal data
+### 2. Legal data
 
 ```bash
 cp automation/config/site.toml.example automation/config/site.toml
@@ -65,29 +78,55 @@ registration_number = "NL821984986B01"
 # same fields
 ```
 
-The registration number is checked against the real register (e.g. VIES), even in dev. No other fields are allowed in an address.
+The registration number is checked against the real register (e.g. VIES), even in dev. No other fields are allowed in an address. `site.toml` and `.env` are git-ignored.
 
-`site.toml` and `.env` are git-ignored. Nothing else needs to be configured for dev.
-
-### 3. Start the web server and get the certificate
+### 3. Start the services
 
 ```bash
 docker compose up -d
-docker compose logs caddy | grep -i "certificate obtained"
+docker compose logs caddy | grep -i "certificate obtained"    # with Caddy: wait for this line
 ```
 
-`docker compose up -d` starts nginx and Caddy. Wait until the log shows the certificate was obtained; this usually takes under a minute.
+### 4. Setup A only: put the identity key into OpenBao
 
-### 4. Build the tool and check the setup
+**Once, on a new host: initialise OpenBao.**
+
+```bash
+automation/openbao/admin.sh init
+```
+
+It shows two values **once**: the *unseal key* and the *admin token*.
+- Store both in your password manager, not on the host, then press Enter.
+- `admin.sh init` then unlocks OpenBao and enables signing.
+- It also writes `gx`'s sign-only token to `secrets/openbao-token` (root-only, git-ignored).
+
+**Import the certificate and its key.** Copy the `.p12` into RAM, not onto the disk, then import it:
+
+```bash
+scp egi.p12 admin@host:/dev/shm/          # from your machine
+automation/openbao/admin.sh import /dev/shm/egi.p12
+```
+
+The command asks for the admin token and the `.p12` password, and then:
+1. checks that the key matches the certificate, that the certificate is for `GX_DOMAIN`, and that it hasn't expired;
+2. imports the key into OpenBao, where nobody can export it, not even the admin;
+3. writes only the public chain to `certs/identity-chain.pem`;
+4. deletes the `.p12` from the host.
+
+Keep the original `.p12` only in your organisation's secure storage. It's the backup.
+
+All of this runs in the separate `openbao-admin` container. It has no internet access and handles the key only in RAM. The `gx` container never sees the key.
+
+### 5. Build the tool and check the setup
 
 ```bash
 docker compose build gx
 docker compose run --rm gx status
 ```
 
-`status` changes nothing and never touches the key. On a fresh setup it reports `ACTION` for every step. `PROBLEM` means something is missing, and the message says what.
+`status` changes nothing. Its first line checks the signing key, for example `key ok  OpenBao key 'gx-identity' v1 (RS256) matches the certificate`. On a fresh setup the other lines report `ACTION`. `PROBLEM` means something is missing, and the message says what to do.
 
-### 5. First run
+### 6. First run
 
 Recommended: a dry run first, then step by step.
 
@@ -104,7 +143,7 @@ When it finishes with `Result: renewed`, the identity is live:
 - `https://<domain>/cert.pem`
 - `https://<domain>/gaia-x/{lrn,legal-person,tandc,compliance-vc}.jwt`
 
-### 6. Keep it current
+### 7. Keep it current
 
 ```bash
 docker compose run --rm gx run
@@ -112,9 +151,7 @@ docker compose run --rm gx run
 
 Run this daily (cron or a systemd timer). It does nothing until something is due:
 - the Compliance VC has fewer than 21 days left, or
-- Caddy's certificate or key changed.
-
-Example crontab line:
+- the certificate or key changed.
 
 ```
 0 4 * * *  cd /path/to/gaia-x-hosting && docker compose run --rm gx run >> /var/log/gx.log 2>&1
@@ -126,8 +163,31 @@ Example crontab line:
 - Published files are never half-replaced: nothing reaches `static/gaia-x/` until the Compliance Service accepts the submission.
 - The signed drafts stay in `static/.staging/` for inspection.
 - Fix the cause and run again; finished steps are skipped automatically.
+- **Setup A, "OpenBao is sealed":** the host or OpenBao restarted. Run `automation/openbao/admin.sh unseal`. The run stops before contacting Gaia-X.
 
 **Wizard fallback:** if you obtained the credentials with the Gaia-X Wizard instead, copy its `credentials.zip` to `static/.staging/` (the container sees only `static/`) and run `docker compose run --rm gx import-zip static/.staging/credentials.zip`. It imports only credentials issued for your domain.
+
+---
+
+## Setup A: OpenBao administration
+
+All commands run on the host; `admin.sh` starts OpenBao if needed.
+
+| Command | When | Asks for |
+|---|---|---|
+| `admin.sh init` | Once, on a new host | nothing; shows the unseal key and admin token once |
+| `admin.sh import FILE.p12` | First import, and every certificate renewal | admin token, `.p12` password |
+| `admin.sh unseal` | After every restart of the host or of OpenBao | unseal key |
+| `admin.sh token` | `gx`'s token expired or must be replaced; the old one is revoked | admin token |
+| `admin.sh status` | Any time | nothing |
+
+**Certificate renewal.** Import the new `.p12` the same way.
+- If the key changed, it becomes a new version of the same OpenBao key, and `gx` uses the latest version.
+- Then run `gx run`: it notices the new certificate (and key) and re-issues the credentials.
+
+**gx's token** is valid for 90 days and extended on every `gx` run, so it only expires if `gx` doesn't run for 90 days. `admin.sh status` shows how many days are left.
+
+**Backup.** OpenBao keeps its data, encrypted, in the `openbao_data` volume; the unseal key opens it. If the volume is lost, start again with `admin.sh init` and re-import the original `.p12`.
 
 ---
 
@@ -139,7 +199,7 @@ gx [--env dev|prod] [--config-dir DIR] COMMAND
 
 | Command | Purpose |
 |---|---|
-| `status` | What is current and what a run would do. Read-only, never needs the key. |
+| `status` | Is the key usable, what is current, what would a run do. Read-only. |
 | `run` | Bring everything up to date, unattended. Safe to repeat. |
 | `run -i` | The same steps, asking before each one |
 | `run --until STEP` / `--from STEP` | Run only part of the pipeline; `--until issue` is the dry run |
@@ -165,10 +225,10 @@ cert -> did -> preflight -> issue -> submit -> publish -> ces
 
 | Step | Does | Runs when |
 |---|---|---|
-| `cert` | Takes Caddy's certificate, adds the self-signed root and checks the chain, domain and expiry. Writes `static/cert.pem`. | the certificate changed |
+| `cert` | Reads the identity chain (setup A: `certs/`, setup B: Caddy's storage), puts it in order, adds the self-signed root, and checks the chain, domain and expiry. Writes `static/cert.pem`. | the certificate changed |
 | `did` | Writes `static/.well-known/did.json` from `cert.pem` | `cert.pem` changed |
-| `preflight` | Checks that the live site serves the current files, that the Registry accepts the chain, and that the T&C hash is still accepted | always (read-only) |
-| `issue` | Gets the registration-number credential (LRN) from the Notary and signs the Legal Person, the T&C and the presentation (VP) into `static/.staging/` | renewal is due or the key changed; **only this step reads the key** |
+| `preflight` | Checks that the signing key is usable and belongs to the certificate, that the live site serves the current files, that the Registry accepts the chain, and that the T&C hash is still accepted | always (read-only) |
+| `issue` | Gets the registration-number credential (LRN) from the Notary and signs the Legal Person, the T&C and the presentation (VP) into `static/.staging/` | renewal is due or the key changed |
 | `submit` | Sends the VP to the Compliance Service and checks the Compliance VC that comes back | something was issued |
 | `publish` | Moves all four credentials into `static/gaia-x/` at once | a new Compliance VC was accepted |
 | `ces` | Announces the Compliance VC on the Credential Event Service | never in dev |
@@ -181,102 +241,105 @@ If the Gaia-X terms change, `preflight` stops with a message. Accepting new term
 
 ## Configuration
 
-Normally you edit only `.env` (the domain) and `config/site.toml` (the legal data). The rest is committed defaults.
+Normally you edit only `.env` (domain and setup) and `config/site.toml` (legal data). The rest is committed defaults.
 
 | File | Holds |
 |---|---|
-| `config/base.toml` | Shared defaults: credential URLs, renewal windows (14 / 21 / 90 days), T&C hash |
-| `config/dev.toml`, `config/prod.toml` | Per environment: Gaia-X endpoints, certificate and key location, signer, CES |
+| `config/base.toml` | Shared defaults: credential URLs, renewal windows (14 / 21 / 90 days), T&C hash, and the `[vault]` and `[letsencrypt]` settings |
+| `config/dev.toml`, `config/prod.toml` | Per environment: Gaia-X endpoints, whether EV is required, CES |
 | `config/site.toml` | This deployment: legal data, plus any override of the files above |
-| environment variables | Last word: `GX_DOMAIN`, `GX_ENV`, `GX_CHAIN_FILE`, `GX_SIGNING_KEY_FILE`, `GX_SIGNING_KEY_PASSPHRASE`, `VAULT_ADDR` |
+| environment variables | Last word: `GX_DOMAIN`, `GX_ENV`, `GX_IDENTITY` (set by `compose.letsencrypt.yml`), `GX_STATIC_DIR` |
 
-**Dev safeguards.** The config is refused when dev points at anything other than the lab `/development` or `/main` endpoints, or when CES is enabled.
+**Safeguards.** The config is refused when:
+- dev points at anything other than the lab `/development` or `/main` endpoints, or enables CES;
+- prod uses lab endpoints, doesn't require an EV certificate, or uses setup B.
 
-**Prod safeguards.** The config is refused when prod uses lab endpoints, doesn't require an EV certificate, or reads the key from a file.
+### Setup B details
 
-**Running without Docker.** You can run `pip install ./automation`, then `gx ...` with certbot instead of Caddy. Point `cert.chain_file` and `signer.key_file` in `site.toml` at `/etc/letsencrypt/live/{domain}/`, and renew with `certbot --reuse-key`.
-
-### Why the Caddyfile looks the way it does
-
-`caddy/Caddyfile` sets three options:
+`caddy/Caddyfile` sets three options. They matter only when Caddy's certificate is the identity:
 
 | Option | Reason |
 |---|---|
 | `issuer acme` | Let's Encrypt only. Otherwise Caddy may fall back to ZeroSSL, which gives a different chain. |
-| `key_type rsa2048` | Gives RS256 signatures, like the expected production EV certificate |
+| `key_type rsa2048` | Gives RS256 signatures |
 | `reuse_private_keys` | Keeps the key across renewals. Without it, every renewal would invalidate `did.json` and all credentials. |
 
 Caddy's docs say `reuse_private_keys` may be removed. If that happens, `gx` detects the key change and re-issues automatically.
 
-`gx` reads the files from Caddy's volume at `caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/<domain>.{crt,key}`. They are root-only (`0600`), which is why the `gx` container runs as root.
+`gx` reads Caddy's files at `caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>/<domain>.{crt,key}` in its volume. They are root-only (`0600`), which is why the `gx` container runs as root.
+
+**Running without Docker** (setup B with certbot): `pip install ./automation`, then set `source = "letsencrypt"` in `[identity]` and point `[letsencrypt]` at `/etc/letsencrypt/live/{domain}/` in `site.toml` (see `site.toml.example`). Renew with `certbot --reuse-key`.
 
 ---
 
-## Production (not ready)
+## Production
 
-The steps and the code are the same as in dev. Only the configuration and the signer differ:
-- `GX_ENV=prod`.
-- Endpoints of a production GXDCH operator, set in `site.toml`.
-- An EV SSL certificate chain in `certs/`.
-- Signing through HashiCorp Vault (`signer.backend = "vault"`): the private key never exists as a file on the host.
-
-Missing:
-- **The Vault signer:** `VaultTransitSigner` in `gx/signers.py`; the planned API calls are in its docstring.
-- **EGI's decision** on where Vault runs.
-- **The certificate import**, which depends on the form the EV certificate arrives in.
+Production is setup A with `GX_ENV=prod`; the code and the OpenBao workflow are the same as in dev. What changes:
+- an **EV SSL** certificate;
+- the endpoints of a production GXDCH operator, set in `site.toml`;
+- CES announcements, which are on.
 
 ---
 
 ## For developers
 
 ```
+docker-compose.yml             nginx, Caddy, OpenBao, gx, openbao-admin
+compose.letsencrypt.yml        setup B: gx reads Caddy's storage
 automation/
   Dockerfile, pyproject.toml   python:3.12-slim; dependencies: cryptography, requests
   config/                      see Configuration
+  openbao/
+    config.hcl                 OpenBao server configuration
+    Dockerfile, admin-task.sh  the openbao-admin image and what it runs
+    admin.sh                   host-side entry point for the admin
   gx/
     __main__.py      CLI
     constants.py     fixed paths, URLs, API paths, media types, env var names
     errors.py        exceptions
-    config.py        config loading and the dev/prod safeguards
+    config.py        config loading, identity sources, safeguards
     pipeline.py      Step and Gate protocols, Context, run_steps
-    steps.py         the seven steps, Wizard zip import
-    signers.py       Signer protocol: PemFileSigner (dev), VaultTransitSigner (stub)
+    steps.py         the seven steps, key check, Wizard zip import
+    signers.py       Signer protocol: TransitSigner (OpenBao), PemFileSigner (setup B)
     jws.py           compact JWS over any signer
-    chain.py         chain completion and checks, did.json (also used by scripts/generate_did_json.py)
+    chain.py         chain ordering, completion and checks, did.json (also used by scripts/generate_did_json.py)
     credentials.py   credential payloads and headers
     gxdch.py         HTTP calls to the Notary, Registry, Compliance and CES
 ```
 
 - **Interactive and automatic runs** differ only in the `Gate`.
-- **Dev and prod** differ only in the config and the `Signer` backend.
-- **The Gaia-X formats used** are documented with their sources in the docstrings of `credentials.py` and `gxdch.py`.
+- **The two setups** differ only in the config and the `Signer` backend.
+- **The Gaia-X formats used** are documented with their sources in the docstrings of `credentials.py` and `gxdch.py`, and the OpenBao formats in `signers.py`.
 
 Gaia-X behaviours the code depends on (gx-compliance source and live lab, 2026-11-02):
 
 - **The Compliance VC** is a `gx:ParticipantComplianceCredential`. It lists each submitted credential as `{id, gx:credentialType, digestSRI}`, where `digestSRI` is `sha256-` plus the SHA-256 of the decoded payload in JCS (RFC 8785) form. `submit` refuses a Compliance VC that doesn't list our three credentials with matching digests.
 - **Signatures before shapes.** The Compliance Service checks signatures and resolves DIDs before it checks credential shapes. Its shape check uses only the `credentialSubject`s, merged into one graph, with RDFS inference and then SHACL using the Registry's `/development` shapes.
 - **Notary retries.** The Notary returns 502 when the external register it queries (e.g. VIES) is rate-limiting it. `gx` retries after 10, 30 and 60 seconds.
-- **Let's Encrypt's current hierarchy** (`YR1`/`YE2` → `Root YR`/`Root YE` → cross-signed by ISRG X1/X2) is completed through AIA links and accepted by the Registry.
+- **Trust anchors.** Let's Encrypt's current hierarchy and HARICA's TLS roots (2021) are trusted by the Registry on `/development` and `/v2` (checked 2026-11-05).
 
 ### Tests
 
+Run them from WSL or Linux, which is where Docker is available:
+
 ```bash
 cd automation
-pip install -e ".[test]"
-pytest                        # offline: unit tests + full pipeline runs against a fake GXDCH (~10 s)
-pytest --live                 # also against the Gaia-X lab and public services (~1 min)
-pip install -e ".[shacl]"     # optional, for the live shape test
+python3 -m venv ~/.venvs/gx-tests && ~/.venvs/gx-tests/bin/pip install -e ".[test]"
+~/.venvs/gx-tests/bin/pytest              # offline: unit tests + full pipeline runs, both setups (~10 s)
+~/.venvs/gx-tests/bin/pytest --openbao    # also against a real OpenBao 2.7.1 in Docker (~1 min)
+~/.venvs/gx-tests/bin/pytest --live       # also against the Gaia-X lab and public services (~1 min)
 ```
+
+`pip install -e ".[shacl]"` adds what the live shape test needs.
 
 | File | Covers |
 |---|---|
-| `conftest.py` | Fixtures: a throwaway CA, a deployment in a temp directory with Caddy's files simulated, and `FakeGxdch`. `FakeGxdch` mirrors the lab's formats and verifies what it receives the way the Compliance Service does. |
+| `conftest.py` | Fixtures: a throwaway CA, a deployment in a temp directory for either setup, `FakeOpenBao` (the Transit API in memory) and `FakeGxdch`. Both fakes mirror the real formats, and `FakeGxdch` verifies what it receives the way the Compliance Service does. |
 | `test_jws.py`, `test_chain.py`, `test_config.py`, `test_signers.py`, `test_credentials.py`, `test_gxdch.py`, `test_pipeline.py`, `test_steps.py` | One file per module |
-| `test_end_to_end.py` | RSA and EC runs over time: first run, idle run, `--force`, certificate renewal with the same key, key change, Compliance refusal, digest mismatch, dry run, expiring certificate; the CLI and its exit codes |
-| `test_live_lab.py` (`--live`) | Lab Notary with EGI's VAT ID; Registry reads; real Let's Encrypt chains checked by the Registry; a full Compliance run of `gx`'s payloads signed by the vc-jwt.io test identity (the Wizard's test mode) |
+| `test_end_to_end.py` | Both setups, RSA and EC, over time: first run, idle run, `--force`, renewal with the same key, key change, Compliance refusal, digest mismatch, dry run, expiring certificate. Setup A: no key file anywhere, sealed OpenBao, mismatching key. The CLI and its exit codes. |
+| `test_openbao.py` (`--openbao`) | A real OpenBao with this repository's `config.hcl` and admin image. Covers `init`, `import`, the key can't be exported, signing, the full pipeline, refused imports, key renewal as a new version, token replacement, `status`, sealed after restart then `unseal`, and EC keys. |
+| `test_live_lab.py` (`--live`) | Lab Notary with EGI's VAT ID; Registry reads; real Let's Encrypt chains checked by the Registry; a full Compliance run signed by the vc-jwt.io test identity (the Wizard's test mode) |
 | `test_live_shapes.py` (`--live`, needs `pyshacl`) | EGI's credentials against the lab SHACL shapes, built the way the Compliance Service builds its graph; broken variants are rejected |
-
-The suite passes on Python 3.10 (Windows) and 3.12 (Linux, the container's version).
 
 One check isn't automated: verifying `gx`'s JWTs with the Compliance Service's own library (jose 4.15.9, Node). It was run once by hand on 2026-11-02, and all JWTs verified.
 
@@ -284,8 +347,8 @@ One check isn't automated: verifying `gx`'s JWTs with the Compliance Service's o
 
 | Item | State |
 |---|---|
-| First full run on a real host | Needs a host with a public DNS name |
+| First full run on a real host | Needs the host and EGI's `.p12` |
 | Legal name | Use `EGI Foundation` (as provided) or `STICHTING EGI` (registered name in VIES)? |
 | `--report FILE` | Writes inside the container; only a path under `static/` reaches the host. Needs a mounted log directory. |
 | Notifications | Not built. Hook points: the exit code of `gx status` / `gx run` and the JSON from `--report`. |
-| Production | See above |
+| Production | EV certificate; where OpenBao runs (see Production) |

@@ -28,11 +28,32 @@ ENV_VAR_KEY_PASSPHRASE: Final[str] = "GX_SIGNING_KEY_PASSPHRASE"
 # Variable -> (section, key). Applied last, so they win over every config file.
 ENV_OVERRIDES: Final[dict[str, tuple[str, str]]] = {
     "GX_DOMAIN": ("identity", "domain"),
+    "GX_IDENTITY": ("identity", "source"),
     "GX_STATIC_DIR": ("paths", "static_dir"),
-    "GX_CHAIN_FILE": ("cert", "chain_file"),
-    "GX_SIGNING_KEY_FILE": ("signer", "key_file"),
-    "VAULT_ADDR": ("signer", "vault_addr"),
 }
+
+# ── Identity sources ──────────────────────────────────────────────────────────
+# Where the identity certificate and its key come from (config identity.source).
+
+SOURCE_VAULT: Final[str] = "vault"              # own certificate, key in OpenBao (default, prod)
+SOURCE_LETSENCRYPT: Final[str] = "letsencrypt"  # Caddy's certificate and key file (dev fallback)
+IDENTITY_SOURCES: Final[tuple[str, ...]] = (SOURCE_VAULT, SOURCE_LETSENCRYPT)
+
+SIGNER_TRANSIT: Final[str] = "transit"          # signer backend for SOURCE_VAULT
+SIGNER_PEM: Final[str] = "pem"                  # signer backend for SOURCE_LETSENCRYPT
+# Keys of the [vault] config section handed to the Transit signer.
+TRANSIT_SETTINGS: Final[tuple[str, ...]] = ("address", "mount", "key_name", "token_file")
+
+# ── OpenBao (HashiCorp Vault API), paths below the server address ─────────────
+
+OPENBAO_TOKEN_HEADER: Final[str] = "X-Vault-Token"
+OPENBAO_KEY: Final[str] = "/v1/{mount}/keys/{name}"
+OPENBAO_SIGN: Final[str] = "/v1/{mount}/sign/{name}/{hash}"
+OPENBAO_RENEW_SELF: Final[str] = "/v1/auth/token/renew-self"
+# Transit key types an identity certificate can have, and their hash names for /sign.
+OPENBAO_KEY_TYPES: Final[tuple[str, ...]] = (
+    "rsa-2048", "rsa-3072", "rsa-4096", "ecdsa-p256", "ecdsa-p384", "ecdsa-p521")
+OPENBAO_HASHES: Final[dict[str, str]] = {"256": "sha2-256", "384": "sha2-384", "512": "sha2-512"}
 
 # ── Configuration files ───────────────────────────────────────────────────────
 

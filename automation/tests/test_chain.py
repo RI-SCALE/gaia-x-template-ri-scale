@@ -8,6 +8,7 @@ from gx.chain import (
     has_ev_oid,
     load_chain,
     normalize_domain,
+    order_chain,
     to_pem,
 )
 
@@ -58,6 +59,14 @@ def test_check_chain_problems(pki: Pki) -> None:
     assert "only one certificate" in check_chain([leaf])[0]
     problems = check_chain([leaf, pki.root])  # intermediate missing
     assert any("broken chain at position 0" in p for p in problems)
+
+
+def test_order_chain_puts_the_leaf_first(pki: Pki) -> None:
+    """A .p12 export may list the CA certificates before the leaf."""
+    leaf = pki.leaf(pki.keys["rsa"])
+    other = make_cert("Unrelated", "Unrelated", pki.keys["ec"].public_key(), pki.keys["ec"], ca=True)
+    assert order_chain([pki.root, other, pki.intermediate, leaf]) == [leaf, pki.intermediate, pki.root]
+    assert order_chain([pki.intermediate, leaf]) == [leaf, pki.intermediate]
 
 
 def test_pem_round_trip(pki: Pki) -> None:

@@ -1,0 +1,10 @@
+# Setup B (fallback, for an organisation without any certificate of its own):
+# Caddy's Let's Encrypt certificate doubles as the identity certificate; no OpenBao.
+# Gives gx read access to Caddy's storage, which holds the key as a plain file.
+# Selected in .env - see automation/README.md, "Choose your setup".
+services:
+  gx:
+    environment:
+      GX_IDENTITY: letsencrypt
+    volumes:
+      - caddy_data:/caddy-data:ro

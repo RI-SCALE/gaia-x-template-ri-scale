@@ -29,8 +29,10 @@ static/gaia-x/*.jwt
 # Credentials staged by the gx tool before they are published.
 static/.staging/
 
-# Production identity certificate chain as delivered by the CA (gx prod config).
+# Public identity certificate chain, written by automation/openbao/admin.sh import.
 certs/
+# gx's sign-only OpenBao token, written by automation/openbao/admin.sh.
+secrets/
 
 # ── Deployment settings (domain, legal data) ─────────────────────────────────
 .env

@@ -109,10 +109,11 @@ legal existence, physical address, domain control and a callback to your publish
 Ask the CA for written confirmation that the certificate carries policy OID `2.23.140.1.1`.
 **Decide where the private key will live before ordering**, and generate the key and CSR there
 instead of letting the CA generate them. Every renewal (Step 5) signs with this key, so it must
-be reachable by whatever does the renewals; for automation the target is a key held in Vault,
-not a file on the web host (see [`automation/README.md`](automation/README.md)). A key that
-exists only in a USB token or smart card still signs (PKCS#11), but only with that device
-present.
+be reachable by whatever does the renewals; with the `gx` tool that is a key held in OpenBao
+(an open-source secrets vault, run as a container next to nginx, that signs on request and
+never hands the key out), never a file on the web host. A key the CA delivers in a PKCS#12
+file can be imported into OpenBao instead ([`automation/README.md`](automation/README.md),
+"Choose your setup").
 
 | Environment | Certificate |
 |---|---|
@@ -347,8 +348,9 @@ nginx serves them the moment they land. Nothing is published before this step.
 
 #### Option 2 — submit the VP yourself (scriptable, recommended for renewals)
 
-The [`gx` tool](automation/README.md) automates this option end to end (dev today; production
-waits for its Vault signer). By hand: bundle the three signed VC-JWTs into a **VP-JWT** and POST it:
+The [`gx` tool](automation/README.md) automates this option end to end, signing through OpenBao
+(tested in the lab; production needs the EV certificate). By hand: bundle the three signed
+VC-JWTs into a **VP-JWT** and POST it:
 
 ```bash
 VCID=$(python -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" \
@@ -533,7 +535,7 @@ Optional Label Levels are not required for basic interoperability:
 [ ] GXDCH operator chosen from the live meta-registry; its evsslonly flag checked
 [ ] EV SSL certificate ordered, CA confirmed policy OID 2.23.140.1.1 is present
       (an eIDAS QTSP can issue one; a Qualified Certificate for eSeal cannot be used)
-[ ] Private key generated where renewals can use it (Vault for automation), never committed
+[ ] Private key kept where renewals can use it (OpenBao with the gx tool), never committed
 [ ] Permanent public domain with HTTPS on port 443
 [ ] cert.pem = full chain ENDING IN A SELF-SIGNED ROOT; last cert has subject == issuer
 [ ] did.json at /.well-known/did.json, x5u pointing at the live cert.pem

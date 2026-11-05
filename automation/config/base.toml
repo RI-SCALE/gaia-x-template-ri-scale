@@ -6,6 +6,30 @@
 [identity]
 key_id = "key-1"        # verification method: did:web:<domain>#key-1
 alg = "auto"            # auto = RS256 for RSA keys, ES256/ES384/ES512 for EC keys
+# Where the identity certificate and its key come from (automation/README.md, "Choose your setup"):
+#   "vault"        your organisation's certificate; the key lives in OpenBao and gx only asks it to sign
+#   "letsencrypt"  Caddy's Let's Encrypt certificate and key file (dev only, no other certificate at all)
+# With docker compose the setup is chosen in .env; compose.letsencrypt.yml sets GX_IDENTITY.
+source = "vault"
+
+[vault]
+# OpenBao Transit engine (the HashiCorp Vault API). Paths as seen inside the gx container.
+address = "http://openbao:8200"
+mount = "transit"
+key_name = "gx-identity"
+token_file = "/run/secrets/gx/openbao-token"   # sign-only token written by automation/openbao/admin.sh
+chain_file = "certs/identity-chain.pem"         # public chain written by `admin.sh import`
+extra_roots = []
+
+[letsencrypt]
+# Caddy's certificate storage, mounted read-only at /caddy-data by compose.letsencrypt.yml.
+chain_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.crt"
+key_file = "/caddy-data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/{domain}/{domain}.key"
+# Fallback when the chain's AIA URL cannot be followed (the normal path needs none of these).
+extra_roots = [
+  "https://letsencrypt.org/certs/isrgrootx1.pem",
+  "https://letsencrypt.org/certs/isrg-root-x2.pem",
+]
 
 [paths]
 # Relative paths resolve against the gaia-x-hosting directory.

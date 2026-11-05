@@ -33,10 +33,15 @@ from gx.constants import (
     ENV_VAR_ENV,
     ENV_VAR_HOSTING_DIR,
     ENVS,
+    IDENTITY_SOURCES,
     LAB_HOST,
     LAB_PATHS,
     REGISTRATION_TYPES,
+    SIGNER_PEM,
+    SIGNER_TRANSIT,
     SITE_CONFIG_FILE,
+    SOURCE_VAULT,
+    TRANSIT_SETTINGS,
 )
 from gx.errors import ConfigError
 
@@ -47,7 +52,8 @@ class Config:
     domain: str
     key_id: str
     alg: str                        # ALG_AUTO or an explicit JWS alg
-    root: Path                      # the gaia-x-hosting directory; relative paths resolve against it
+    source: str                     # identity source: SOURCE_VAULT or SOURCE_LETSENCRYPT
+    root: Path                     # the gaia-x-hosting directory; relative paths resolve against it
     static_dir: Path
     staging_dir: Path
     files: dict[str, str]           # credential name -> path under static_dir (== URL path)
@@ -131,22 +137,29 @@ def load_config(env: str | None = None, config_dir: Path | None = None) -> Confi
         p = Path(value.replace("{domain}", domain))
         return p if p.is_absolute() else root / p
 
-    paths, cert, signer = data.get("paths", {}), data.get("cert", {}), dict(data.get("signer", {}))
-    if signer.get("key_file"):
-        signer["key_file"] = str(path(signer["key_file"]))
+    identity, paths = data.get("identity", {}), data.get("paths", {})
+    source = identity.get("source", SOURCE_VAULT)
+    settings = dict(data.get(source, {}))   # the [vault] or [letsencrypt] section
+    if source == SOURCE_VAULT:
+        signer = {"backend": SIGNER_TRANSIT, **{k: settings.get(k, "") for k in TRANSIT_SETTINGS}}
+        signer["token_file"] = str(path(signer["token_file"])) if signer["token_file"] else ""
+    else:
+        key_file = settings.get("key_file", "")
+        signer = {"backend": SIGNER_PEM, "key_file": str(path(key_file)) if key_file else ""}
 
     cfg = Config(
         env=env,
         domain=domain,
-        key_id=data["identity"].get("key_id", DEFAULT_KEY_ID),
-        alg=data["identity"].get("alg", ALG_AUTO),
+        key_id=identity.get("key_id", DEFAULT_KEY_ID),
+        alg=identity.get("alg", ALG_AUTO),
+        source=source,
         root=root,
         static_dir=path(paths.get("static_dir", DEFAULT_STATIC_DIR)),
         staging_dir=path(paths.get("staging_dir", DEFAULT_STAGING_DIR)),
         files=dict(data["files"]),
-        chain_file=path(cert.get("chain_file", "")),
-        extra_roots=tuple(cert.get("extra_roots", ())),
-        require_ev=bool(cert.get("require_ev", env == "prod")),
+        chain_file=path(settings.get("chain_file", "")),
+        extra_roots=tuple(settings.get("extra_roots", ())),
+        require_ev=bool(data.get("cert", {}).get("require_ev", env == "prod")),
         gxdch={k: v.rstrip("/") for k, v in data.get("gxdch", {}).items()},
         signer=signer,
         legal=data.get("legal", {}),
@@ -154,7 +167,7 @@ def load_config(env: str | None = None, config_dir: Path | None = None) -> Confi
         renewal=data.get("renewal", {}),
         ces_enabled=bool(data.get("ces", {}).get("enabled", False)),
     )
-    problems = validate(cfg, has_chain_file=bool(cert.get("chain_file")))
+    problems = validate(cfg, has_chain_file=bool(settings.get("chain_file")))
     if problems:
         where = f"{config_dir / SITE_CONFIG_FILE} (or {config_dir / env_file})"
         raise ConfigError("invalid configuration, fix it in " + where + ":\n  - " + "\n  - ".join(problems))
@@ -166,8 +179,15 @@ def validate(cfg: Config, has_chain_file: bool = True) -> list[str]:
     problems = []
     if not cfg.domain or cfg.domain.endswith("example.eu"):
         problems.append("identity.domain is not set")
+    if cfg.source not in IDENTITY_SOURCES:
+        problems.append(f"identity.source must be one of {', '.join(IDENTITY_SOURCES)}, got {cfg.source!r}")
+        return problems
     if not has_chain_file:
-        problems.append("cert.chain_file is not set")
+        problems.append(f"{cfg.source}.chain_file is not set")
+    if cfg.source == SOURCE_VAULT:
+        problems += [f"vault.{k} is not set" for k in TRANSIT_SETTINGS if not cfg.signer.get(k)]
+    elif not cfg.signer.get("key_file"):
+        problems.append("letsencrypt.key_file is not set")
 
     legal = cfg.legal
     for key in ("name", "registration_type", "registration_number"):
@@ -199,9 +219,9 @@ def validate(cfg: Config, has_chain_file: bool = True) -> list[str]:
             problems.append(f"prod must not use lab test paths: {', '.join(bad)}")
         if not cfg.require_ev:
             problems.append("cert.require_ev must be true in prod")
-        if cfg.signer.get("backend") == "pem" and not cfg.signer.get("allow_key_file_in_prod"):
+        if cfg.source != SOURCE_VAULT:
             problems.append(
-                "signer.backend = 'pem' is refused in prod: the private key must not be a file on "
-                "this host. Use backend = 'vault' (see automation/README.md)"
+                "identity.source = 'letsencrypt' is refused in prod: production needs an EV certificate "
+                "whose key is kept in OpenBao (identity.source = 'vault', see automation/README.md)"
             )
     return problems

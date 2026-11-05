@@ -6,6 +6,7 @@ import pytest
 
 import gx.__main__ as cli
 from gx import jws
+from gx.constants import SOURCE_LETSENCRYPT, SOURCE_VAULT
 from gx.pipeline import AutoGate, Context, InteractiveGate, RunReport, run_steps
 from gx.steps import STEPS
 
@@ -20,10 +21,42 @@ def statuses(report: RunReport) -> dict[str, str]:
     return {o.step: o.status for o in report.outcomes}
 
 
-@pytest.fixture(params=["rsa", "ec"])
+@pytest.fixture(params=[("rsa", SOURCE_VAULT), ("ec", SOURCE_VAULT), ("rsa", SOURCE_LETSENCRYPT),
+                        ("ec", SOURCE_LETSENCRYPT)], ids=lambda p: f"{p[1]}-{p[0]}")
 def setup(request, make_deployment, pki: Pki) -> tuple[Deployment, FakeGxdch]:
-    deployment = make_deployment(key=request.param)
+    key, source = request.param
+    deployment = make_deployment(key=key, source=source)
     return deployment, FakeGxdch(deployment.config(), pki)
+
+
+@pytest.fixture
+def vault_setup(make_deployment, pki: Pki) -> tuple[Deployment, FakeGxdch]:
+    deployment = make_deployment(source=SOURCE_VAULT)
+    return deployment, FakeGxdch(deployment.config(), pki)
+
+
+def test_setup_a_has_no_key_file_anywhere(vault_setup) -> None:
+    deployment, fake = vault_setup
+    assert run(fake).renewed
+    assert not deployment.key_file.exists()
+    assert not any("PRIVATE KEY" in p.read_text(errors="ignore")
+                   for p in deployment.root.rglob("*") if p.is_file())
+
+
+def test_setup_a_sealed_openbao_stops_before_gaia_x(vault_setup) -> None:
+    deployment, fake = vault_setup
+    deployment.openbao.sealed = True
+    report = run(fake)
+    assert statuses(report)["preflight"] == "failed" and "OpenBao is sealed" in report.outcomes[-1].detail
+    assert fake.submitted == [] and not any(deployment.published(fake.cfg).values())
+
+
+def test_setup_a_wrong_key_in_openbao(vault_setup, pki: Pki) -> None:
+    deployment, fake = vault_setup
+    deployment.openbao.keys["gx-identity"].append(pki.keys["rsa2"])   # imported, but cert.pem not renewed
+    report = run(fake)
+    assert statuses(report)["preflight"] == "failed"
+    assert "does not belong to the identity certificate" in report.outcomes[-1].detail
 
 
 def test_first_run_publishes_everything(setup) -> None:
@@ -128,6 +161,18 @@ def test_cli_status_run_status(cli_env: list[str], capsys: pytest.CaptureFixture
     assert "Result: renewed" in capsys.readouterr().out
     assert cli.main([*cli_env, "status"]) == cli.ExitCode.OK
     assert "Everything is up to date." in capsys.readouterr().out
+
+
+def test_cli_status_shows_the_openbao_key(make_deployment, pki: Pki, monkeypatch: pytest.MonkeyPatch,
+                                          capsys: pytest.CaptureFixture[str]) -> None:
+    deployment = make_deployment(source=SOURCE_VAULT)
+    monkeypatch.setattr(cli, "Gxdch", lambda cfg: FakeGxdch(cfg, pki))
+    cli.main(["--config-dir", str(deployment.config_dir), "status"])
+    out = capsys.readouterr().out
+    assert "identity=vault" in out and "OpenBao key 'gx-identity' v1 (RS256) matches the certificate" in out
+    deployment.openbao.sealed = True
+    assert cli.main(["--config-dir", str(deployment.config_dir), "status"]) == cli.ExitCode.FAILED
+    assert "key    PROBLEM  OpenBao is sealed" in capsys.readouterr().out
 
 
 def test_cli_interactive_quit(cli_env: list[str], monkeypatch: pytest.MonkeyPatch) -> None:

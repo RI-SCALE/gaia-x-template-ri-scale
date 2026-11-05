@@ -55,6 +55,24 @@ def load_chain(pem_text: str) -> list[x509.Certificate]:
         raise ValueError("no certificate found in the PEM data") from None
 
 
+def order_chain(certs: list[x509.Certificate]) -> list[x509.Certificate]:
+    """Leaf first, then each issuer, whatever order the file had.
+
+    A .p12 export (or a CA's download) may list the CA certificates first. The leaf is
+    a non-CA, non-self-signed certificate that issued none of the others; certificates
+    off its path are dropped.
+    """
+    issued_others = {id(c) for c in certs if any(o is not c and _issued_by(o, c) for o in certs)}
+    leaves = sorted((c for c in certs if id(c) not in issued_others and not is_self_signed(c)), key=_is_ca)
+    chain = [leaves[0] if leaves else certs[0]]
+    while not is_self_signed(chain[-1]):
+        issuer = next((c for c in certs if c not in chain and _issued_by(chain[-1], c)), None)
+        if issuer is None:
+            break
+        chain.append(issuer)
+    return chain
+
+
 def to_pem(chain: list[x509.Certificate]) -> str:
     return "".join(c.public_bytes(serialization.Encoding.PEM).decode() for c in chain)
 
@@ -71,6 +89,13 @@ def _issued_by(cert: x509.Certificate, issuer: x509.Certificate) -> bool:
 
 def is_self_signed(cert: x509.Certificate) -> bool:
     return _issued_by(cert, cert)
+
+
+def _is_ca(cert: x509.Certificate) -> bool:
+    try:
+        return cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    except x509.ExtensionNotFound:
+        return False
 
 
 def check_chain(chain: list[x509.Certificate]) -> list[str]:
